@@ -1,8 +1,8 @@
 # Customized
-**/data/*
+data/*
 **/data_preprocessing/*
 **/study/*
-**/models/*
+models/*
 **/documents/*
 **/Models/*
 **/processed_data/*
