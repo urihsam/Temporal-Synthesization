@@ -4,6 +4,7 @@ import time
 import torch
 import argparse
 import numpy as np
+import pandas as pd
 from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
@@ -12,8 +13,10 @@ from dataset import EHR
 from nn.vae import Variational_Autoencoder
 from nn.seq2seq_ae import Seq2seq_Autoencoder
 from nn.seq2seq_vae import Seq2seq_Variational_Autoencoder
-from nn.discriminator import CNN_Discriminator
-from nn.gan import MLP_Generator, MLP_Discriminator
+from nn.transformers.naive_transformer import Transformer
+from nn.generator import MLP_Generator
+from nn.discriminator import MLP_Discriminator, CNN_Discriminator
+
 
 from utils.train_utils import sample_start_feature_and_mask
 from utils.daae_utils import save_model as save_daae
@@ -32,22 +35,24 @@ from utils.vae_utils import save_model as save_vae
 from utils.vae_utils import load_model as load_vae
 from utils.vae_utils import model_evaluation as vae_evaluation
 
+from utils.dgat_utils import save_model as save_dgat
+from utils.dgat_utils import load_model as load_dgat
+from utils.dgat_utils import model_evaluation as dgat_evaluation
 
-
-def model_inference(args, AE, zgen, prob_mask):
+def model_inference(args, model, zgen, infer_info, prob_mask):
     # make up start feature
-    start_feature, start_mask = sample_start_feature_and_mask(zgen.size(0))
+    start_feature, start_mask = sample_start_feature_and_mask(zgen.size(0), infer_info)
     if args.no_mask:
-        Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen)
+        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen)
     elif args.use_prob_mask:
-        Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen)
+        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen)
     else:
-        Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen)
+        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen)
 
     return Pgen, Mgen
 
 
-def train_daae(args, datasets, prob_mask):
+def train_daae(args, datasets, infer_info, prob_mask):
     if not args.test:
         # model define
         AE = Seq2seq_Autoencoder(
@@ -149,7 +154,7 @@ def train_daae(args, datasets, prob_mask):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            daae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+            daae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -162,7 +167,7 @@ def train_daae(args, datasets, prob_mask):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = daae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                valid_loss = daae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -193,7 +198,7 @@ def train_daae(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = G(batch_size=args.batch_size)
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE, zgen, infer_info, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -201,14 +206,17 @@ def train_daae(args, datasets, prob_mask):
 
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
-    gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
     
     np.save(os.path.join(args.result_path, 'daae_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
     np.save(os.path.join(args.result_path, 'daae_generated_patients.npy'), gen_xlist) 
+    
+    if not args.no_mask and not args.use_prob_mask:
+        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+        np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
+        
 
 
-def train_vae_gan(args, datasets, prob_mask):
+def train_vae_gan(args, datasets, infer_info, prob_mask):
     if not args.test:
         # model define
         AE = Seq2seq_Variational_Autoencoder(
@@ -284,7 +292,7 @@ def train_vae_gan(args, datasets, prob_mask):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            vae_gan_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+            vae_gan_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -297,7 +305,7 @@ def train_vae_gan(args, datasets, prob_mask):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = vae_gan_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                valid_loss = vae_gan_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -323,7 +331,7 @@ def train_vae_gan(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = torch.randn((args.batch_size, args.latent_size))
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE, zgen, infer_info, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -331,14 +339,16 @@ def train_vae_gan(args, datasets, prob_mask):
 
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
-    gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
     
     np.save(os.path.join(args.result_path, 'daae_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
     np.save(os.path.join(args.result_path, 'daae_generated_patients.npy'), gen_xlist) 
 
+    if not args.no_mask and not args.use_prob_mask:
+        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+        np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
 
-def train_aae(args, datasets, prob_mask):
+
+def train_aae(args, datasets, infer_info, prob_mask):
     if not args.test:
         # model define
         AE = Seq2seq_Autoencoder(
@@ -427,7 +437,7 @@ def train_aae(args, datasets, prob_mask):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            aae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+            aae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -440,7 +450,7 @@ def train_aae(args, datasets, prob_mask):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = aae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                valid_loss = aae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -469,7 +479,7 @@ def train_aae(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = G(batch_size=args.batch_size)
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE, zgen, infer_info, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -477,14 +487,17 @@ def train_aae(args, datasets, prob_mask):
 
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
-    gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+    
     
     np.save(os.path.join(args.result_path, 'daae_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
     np.save(os.path.join(args.result_path, 'daae_generated_patients.npy'), gen_xlist) 
 
+    if not args.no_mask and not args.use_prob_mask:
+        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+        np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
 
-def train_seq2seq_vae(args, datasets, prob_mask):
+
+def train_seq2seq_vae(args, datasets, infer_info, prob_mask):
     if not args.test:
         # model define
         AE = Seq2seq_Variatonal_Autoencoder(
@@ -548,7 +561,7 @@ def train_seq2seq_vae(args, datasets, prob_mask):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            vae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+            vae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -561,7 +574,7 @@ def train_seq2seq_vae(args, datasets, prob_mask):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = vae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                valid_loss = vae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -587,7 +600,7 @@ def train_seq2seq_vae(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = torch.randn((args.batch_size, args.latent_size))
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE, zgen, infer_info, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -603,7 +616,7 @@ def train_seq2seq_vae(args, datasets, prob_mask):
     
 
 
-def train_vae(args, datasets, prob_mask):
+def train_vae(args, datasets, infer_info, prob_mask):
     if not args.test:
         # model define
         AE = Variational_Autoencoder(
@@ -667,7 +680,7 @@ def train_vae(args, datasets, prob_mask):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            vae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+            vae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -680,7 +693,7 @@ def train_vae(args, datasets, prob_mask):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = vae_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                valid_loss = vae_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -706,7 +719,7 @@ def train_vae(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = torch.randn((args.batch_size, args.latent_size))
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE, zgen, infer_info, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -714,11 +727,178 @@ def train_vae(args, datasets, prob_mask):
 
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
-    gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
     
     np.save(os.path.join(args.result_path, 'daae_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
     np.save(os.path.join(args.result_path, 'daae_generated_patients.npy'), gen_xlist) 
+
+    if not args.no_mask and not args.use_prob_mask:
+        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+        np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
+
+
+
+def train_dgat(args, datasets, infer_info, prob_mask):
+    if not args.test:
+        # model define
+        Trans = Transformer(
+            num_encoder_layers=args.num_encoder_layers, #6
+            num_decoder_layers=args.num_decoder_layers, #6
+            dim_feature=args.feature_size,
+            dim_model=args.latent_size, # 512
+            num_heads=args.num_heads, # 6
+            dim_feedforward=args.hidden_size, # 2048
+            encoder_dropout=args.encoder_dropout,
+            decoder_dropout=args.decoder_dropout,
+            use_prob_mask=args.use_prob_mask
+            )
+
+        Dx = CNN_Discriminator(
+            feature_size=args.feature_size,
+            feature_dropout=args.feature_dropout,
+            filter_size=args.filter_size,
+            window_sizes=args.window_sizes,
+            )
+
+        G = MLP_Generator(
+            input_size=args.noise_size,
+            output_size=args.latent_size,
+            archs=args.gmlp_archs
+            )
+
+        Dz = CNN_Discriminator(
+            feature_size=args.latent_size*2,
+            feature_dropout=args.feature_dropout,
+            filter_size=args.filter_size,
+            window_sizes=args.window_sizes,
+            ) 
+
+        if torch.cuda.is_available():
+            Trans = Trans.cuda()
+            Dx = Dx.cuda()
+            G = G.cuda()
+            Dz = Dz.cuda()
+        
+        
+
+        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.learning_rate)
+        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.learning_rate)
+        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.learning_rate)
+        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.learning_rate)
+        opt_gen = torch.optim.Adam(G.parameters(), lr=args.learning_rate)
+        #
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
+        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.lr_decay_rate)
+        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.lr_decay_rate)
+        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.lr_decay_rate)
+
+        if args.dp_sgd == True: # ??? why dec, gen?
+            import pyvacy
+            opt_dec = pyvacy.optim.DPAdam(params=Trans.decoder.parameters(), lr=args.learning_rate, batch_size=args.batch_size,
+                                        l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
+            opt_gen = pyvacy.optim.DPAdam(params=G.parameters(), lr=args.learning_rate, batch_size=args.batch_size,
+                                        l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
+            epsilon = pyvacy.analysis.moments_accountant(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
+
+            print('Training procedure satisfies (%f, %f)-DP' % (2*epsilon, args.delta)) # ?? question, why 2 epsilon?
+
+
+        tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
+        models = {
+            "Trans": Trans,
+            "Dx": Dx,
+            "G": G,
+            "Dz": Dz
+        }
+        opts = {
+            "enc": opt_enc,
+            "dec": opt_dec,
+            "dix": opt_dix,
+            "diz": opt_diz,
+            "gen": opt_gen
+        }
+        lrs = {
+            "enc": lr_enc,
+            "dec": lr_dec,
+            "dix": lr_dix,
+            "diz": lr_diz,
+            "gen": lr_gen
+        }
+        min_valid_loss = float("inf")
+        min_valid_path = ""
+        for epoch in range(args.epochs):
+
+            print("Epoch\t%02d/%i"%(epoch, args.epochs))
+            
+            data_loader = DataLoader(
+                dataset=datasets["train"],
+                batch_size=args.batch_size,
+                shuffle=True,
+                num_workers=cpu_count(),
+                pin_memory=torch.cuda.is_available()
+            )
+        
+            log_file = os.path.join(args.result_path, args.train_log)
+            dgat_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "train", log_file)
+        
+            if epoch % args.valid_eval_freq == 0:
+                data_loader = DataLoader(
+                    dataset=datasets["valid"],
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=cpu_count(),
+                    pin_memory=torch.cuda.is_available()
+                )
+            
+                print("Validation:")
+                log_file = os.path.join(args.result_path, args.valid_log)
+                valid_loss = dgat_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, "valid", log_file)
+                print("****************************************************")
+                print()
+                if valid_loss < min_valid_loss:
+                    min_valid_loss = valid_loss
+                    path = "{}/daae_vloss_{}".format(args.model_path, valid_loss)
+                    min_valid_path = path
+
+                    models = {
+                        "Trans": Trans,
+                        "Dx": Dx,
+                        "G": G,
+                        "Dz": Dz
+                    }
+                    save_dgat(models, path)
+
+            
+        # Generate the synthetic sequences as many as you want 
+        
+        model_path = min_valid_path
+    else:
+        model_path = os.path.join(args.model_path, args.test_model_filename)
+    
+    models = load_dgat(model_path)
+    Trans = models["Trans"]
+    G = models["G"]
+    Trans.eval()
+    G.eval()
+    gen_zs, gen_xs, gen_ms = [], [], []
+    for i in range(args.gendata_size//args.batch_size):
+        zgen = G(batch_size=args.batch_size*args.max_length)
+        zgen = torch.reshape(zgen, (args.batch_size, args.max_length, -1))
+        Pgen, Mgen = model_inference(args, Trans, zgen, infer_info, prob_mask)
+        
+        gen_zs.append(zgen)
+        gen_xs.append(Pgen)
+        gen_ms.append(Mgen)
+
+    gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
+    gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
+    
+    np.save(os.path.join(args.result_path, 'dgat_generated_codes.npy'), gen_zlist)
+    np.save(os.path.join(args.result_path, 'dgat_generated_patients.npy'), gen_xlist) 
+    
+    if not args.no_mask and not args.use_prob_mask:
+        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+        np.save(os.path.join(args.result_path, 'dgat_generated_masks.npy'), gen_mlist)
 
 
 def main(args):
@@ -744,27 +924,41 @@ def main(args):
         prob_mask = np.load(os.path.join(args.data_dir, args.prob_mask_filename))
     else:
         prob_mask = None
-    
+
+    feature_mean = pd.read_pickle("./data_preprocessing/feature_mean.pkl")
+    feature_std = pd.read_pickle("./data_preprocessing/feature_std.pkl")
+    infer_info = {
+        "age_mean": feature_mean["Age"],
+        "age_std": feature_std["Age"],
+        "year_mean": feature_mean["DATEINYEARS"],
+        "year_std": feature_std["DATEINYEARS"]
+    }
+
     if args.model_type == "daae":
         """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
         """
-        train_daae(args, datasets, prob_mask)
+        train_daae(args, datasets, infer_info, prob_mask)
     elif args.model_type == "vae_gan":
         """ Only one GAN in vae_gan, which is for output data x, and z is constrained by KL divergence
         """
-        train_vae_gan(args, datasets, prob_mask)
+        train_vae_gan(args, datasets, infer_info, prob_mask)
     elif args.model_type == "aae":
         """ Only one GAN in aae, which is for hidden state z, and x is only constrained by reconstruction loss
         """
-        train_aae(args, datasets, prob_mask)
+        train_aae(args, datasets, infer_info, prob_mask)
     elif args.model_type == "seq2seq_vae":
         """ No GAN in seq2seq_vae, z is constrained by KL divergence, and x is only constrained by reconstruction loss
         """
-        train_seq2seq_vae(args, datasets, prob_mask)
+        train_seq2seq_vae(args, datasets, infer_info, prob_mask)
     elif args.model_type == "vae":
         """ No GAN in vae, no seq2seq structure, only vanilla vae
         """
-        train_vae(args, datasets, prob_mask)
+        train_vae(args, datasets, infer_info, prob_mask)
+    
+    elif args.model_type == "dgat":
+        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
+        """
+        train_dgat(args, datasets, infer_info, prob_mask)
     
     
 
@@ -800,6 +994,9 @@ if __name__ == '__main__':
     parser.add_argument('-gs','--gendata_size', type=int, default=100000)
     parser.add_argument('-gd', '--gpu_devidx', type=int, default=0)
 
+    parser.add_argument('--num_encoder_layers', type=int, default=6)
+    parser.add_argument('--num_decoder_layers', type=int, default=6)
+    parser.add_argument('--num_heads', type=int, default=6)
     parser.add_argument('-fts', '--feature_size', type=int, default=9)
     parser.add_argument('-rnn', '--rnn_type', type=str, default='gru')
     parser.add_argument('-hs', '--hidden_size', type=int, default=128)

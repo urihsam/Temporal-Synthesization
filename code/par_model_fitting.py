@@ -11,7 +11,7 @@ import os
 # In[2]:
 
 
-raw_data = pd.read_csv("./data_preprocessing/raw_data.csv")
+raw_data = pd.read_pickle("./data_preprocessing/raw_data.pkl")
 
 
 # In[3]:

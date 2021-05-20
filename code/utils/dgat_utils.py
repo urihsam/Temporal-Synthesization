@@ -11,25 +11,25 @@ from utils.train_utils import to_var, sample_start_feature_and_mask, sample_mask
 
 
 def save_model(models, path):
-    AE = models["AE"]
+    Trans = models["Trans"]
     Dx = models["Dx"]
     G = models["G"]
     Dz = models["Dz"]
 
-    torch.save(AE, "{}_AE".format(path))
+    torch.save(Trans, "{}_Trans".format(path))
     torch.save(Dx, "{}_Dx".format(path))
     torch.save(G, "{}_G".format(path))
     torch.save(Dz, "{}_Dz".format(path))
 
 
 def load_model(path):
-    AE = torch.load("{}_AE".format(path))
+    Trans = torch.load("{}_Trans".format(path))
     Dx = torch.load("{}_Dx".format(path))
     G = torch.load("{}_G".format(path))
     Dz = torch.load("{}_Dz".format(path))
 
     models = {
-        "AE": AE,
+        "Trans": Trans,
         "Dx": Dx,
         "G": G,
         "Dz": Dz
@@ -38,7 +38,7 @@ def load_model(path):
 
 
 def model_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, split, log_file):
-    AE = models["AE"]
+    Trans = models["Trans"]
     Dx = models["Dx"]
     G = models["G"]
     Dz = models["Dz"]
@@ -63,16 +63,16 @@ def model_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask
     n_data = 0
 
     if split == 'train':
-        AE.encoder_dropout=args.encoder_dropout
-        AE.decoder_dropout=args.decoder_dropout
-        AE.train()
+        Trans.encoder_dropout=args.encoder_dropout
+        Trans.decoder_dropout=args.decoder_dropout
+        Trans.train()
         Dx.train()
         G.train()
         Dz.train()
     else:
-        AE.encoder_dropout=0.0
-        AE.decoder_dropout=0.0
-        AE.eval()
+        Trans.encoder_dropout=0.0
+        Trans.decoder_dropout=0.0
+        Trans.eval()
         Dx.eval()
         G.eval()
         Dz.eval()
@@ -94,31 +94,36 @@ def model_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask
         #import pdb; pdb.set_trace()
         # Step 0: Evaluate current loss
         if args.no_mask:
-            z, Pinput, Poutput, Moutput = AE(batch['tempo'], batch['target'], None, None)
+            z, Pinput, Poutput, Moutput = Trans(batch['tempo'], batch['target'], None, None)
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['target'], None, None)
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, batch['target'], None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, Moutput = AE(batch['tempo'], batch['target'], batch["mask"], batch["target_mask"])
+            z, Pinput, Poutput, Moutput = Trans(batch['tempo'], batch['target'], batch["mask"], batch["target_mask"])
             output_mask = sample_mask_from_prob(prob_mask, batch["target_mask"].shape[0], batch["target_mask"].shape[1])
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['target'], output_mask, batch["target_mask"])
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, batch['target'], output_mask, batch["target_mask"])
         else:
-            z, Pinput, Poutput, Moutput = AE(batch['tempo'], batch['target'], batch["mask"], batch["target_mask"])
+            z, Pinput, Poutput, Moutput = Trans(batch['tempo'], batch['target'], batch["mask"], batch["target_mask"])
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['target'], Moutput, batch["target_mask"])
-            mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, batch["target_mask"])
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, batch['target'], Moutput, batch["target_mask"])
+            mask_loss = args.beta_mask * Trans.compute_mask_loss(Moutput, batch["target_mask"])
 
-        zgen = G(batch_size=z.size(0))
+        zgen = G(batch_size=z.size(0)*args.max_length)
+        zgen = torch.reshape(zgen, (z.size(0), args.max_length, -1))
         # make up start feature
         start_feature, start_mask = sample_start_feature_and_mask(z.size(0), infer_info)
         if args.no_mask:
-            Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen)
+            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen)
         elif args.use_prob_mask:
-            Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen)
+            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen)
         else:
-            Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen)
+            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen)
 
+        #import pdb; pdb.set_trace()
         Dinput, Doutput, Dgen = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
+        # reshape z, zgen
+        #z = torch.reshape(z, (-1, z.size(-1)))
+        #zgen = torch.reshape(zgen, (-1, zgen.size(-1)))
         Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
 
         xCritic_loss = - Dinput + 0.5 * (Doutput + Dgen)

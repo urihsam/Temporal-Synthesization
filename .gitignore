@@ -4,7 +4,6 @@ data/*
 **/study/*
 models/*
 **/documents/*
-**/Models/*
 **/processed_data/*
 **/experiments/*
 **/results/*

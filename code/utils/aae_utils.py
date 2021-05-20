@@ -33,7 +33,7 @@ def load_model(path):
     return models
 
 
-def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file):
+def model_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, split, log_file):
     if args.use_prob_mask:
         assert prob_mask is not None
     AE = models["AE"]
@@ -104,7 +104,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
 
         zgen = G(batch_size=z.size(0))
         # make up start feature
-        start_feature, start_mask = sample_start_feature_and_mask(z.size(0))
+        start_feature, start_mask = sample_start_feature_and_mask(z.size(0), infer_info)
         if args.no_mask:
             Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen)
         elif args.use_prob_mask:

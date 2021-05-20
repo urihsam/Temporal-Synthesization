@@ -16,10 +16,12 @@ def to_var(x, volatile=False):
     return Variable(x, volatile=volatile)
 
 
-def sample_start_feature_and_mask(batch_size):
+def sample_start_feature_and_mask(batch_size, infer_info):
     padding = torch.zeros(batch_size, 2, dtype=torch.float)
-    age = torch.tensor(np.random.randint(40, 60, size=(batch_size, 1)), dtype=torch.float)
-    year = torch.tensor(np.random.rand(batch_size, 1) * 10 + 38, dtype=torch.float)
+    #age = torch.tensor(np.random.randint(40, 60, size=(batch_size, 1)), dtype=torch.float)
+    #year = torch.tensor(np.random.rand(batch_size, 1) * 10 + 38, dtype=torch.float)
+    age = torch.tensor(np.random.normal(loc=infer_info["age_mean"], scale=infer_info["age_std"], size=(batch_size, 1)), dtype=torch.float)
+    year = torch.tensor(np.random.normal(loc=infer_info["year_mean"], scale=infer_info["year_std"], size=(batch_size, 1)), dtype=torch.float)
     gender = torch.nn.functional.one_hot(torch.tensor(np.random.randint(0, 2, size=batch_size)), num_classes=2).float()
     race = torch.nn.functional.one_hot(torch.tensor(np.random.randint(0, 3, size=batch_size)), num_classes=3).float()
     start_feature = torch.cat((padding, age, year, gender, race), 1)

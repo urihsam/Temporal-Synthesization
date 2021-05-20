@@ -3,6 +3,50 @@ import torch.nn as nn
 import torch.nn.utils.rnn as rnn_utils
 from utils.train_utils import to_var
 
+
+class MLP_Discriminator(nn.Module):
+    def __init__(self, input_size, output_size, archs, activation=nn.LeakyReLU(0.2)):
+        super().__init__()
+        self.input_size = input_size
+        self.output_size = output_size
+
+        layer_sizes = [input_size] + archs
+        layers = []
+
+        for i in range(len(layer_sizes)-1):
+            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
+            layers.append(activation)
+
+        layers.append(nn.Linear(layer_sizes[-1], output_size))
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, x):
+        batch_size = x.size(0)
+        x = torch.cat((x, x.mean(dim=0).repeat([batch_size, 1])), dim=1)
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+        return x.squeeze(1)
+
+    def cal_gradient_penalty(self, real_data, fake_data, gp_lambda=10):
+        batch_size = real_data.size(0)
+        epsilon = torch.rand(batch_size, 1)
+        epsilon = epsilon.expand(real_data.size())
+
+        if torch.cuda.is_available():
+            epsilon = epsilon.cuda()
+
+        interpolates = epsilon * real_data + (1 - epsilon) * fake_data
+        interpolates = torch.autograd.Variable(interpolates, requires_grad=True)
+        D_interpolates = self.forward(interpolates)
+
+        gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                create_graph=True, retain_graph=True, only_inputs=True)[0]
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
+        return gradient_penalty
+
+
+
 class CNN_Discriminator(nn.Module):
 
     def __init__(self, feature_size, feature_dropout, filter_size, window_sizes):

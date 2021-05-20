@@ -29,7 +29,7 @@ def load_model(path):
     return models
 
 
-def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file):
+def model_evaluation(args, models, opts, lrs, data_loader, infer_info, prob_mask, split, log_file):
     AE = models["AE"]
     Dx = models["Dx"]
     if split == 'train':
@@ -95,7 +95,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         # samples from N(0, I)
         zgen = torch.randn(log_var.size())
         # make up start feature
-        start_feature, start_mask = sample_start_feature_and_mask(zgen.size(0))
+        start_feature, start_mask = sample_start_feature_and_mask(zgen.size(0), infer_info)
         if args.no_mask:
             Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen)
         elif args.use_prob_mask:
