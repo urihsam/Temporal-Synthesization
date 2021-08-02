@@ -7,7 +7,270 @@ import numpy as np
 from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
-from utils.train_utils import to_var, sample_start_feature_and_mask, sample_mask_from_prob
+from utils.train_utils import to_var, sample_start_feature_mask, sample_mask_from_prob, model_inference
+
+from pyvacy import optim, analysis
+from pyvacy.optim.dp_optimizer import DPAdam, DPSGD
+import pyvacy.analysis.moments_accountant as moments_accountant
+
+from nn.vae import Variational_Autoencoder
+from nn.seq2seq_vae import Seq2seq_Variational_Autoencoder
+from nn.generator import MLP_Generator
+from nn.discriminator import MLP_Discriminator, CNN_Discriminator
+
+
+def train_model(args, datasets, prob_mask):
+    if not args.test:
+        if args.load_model:
+            model_path = os.path.join(args.model_path, args.pretrained_model_filename)
+            models = load_dgat(model_path)
+            AE = models["AE"]
+            
+        else:
+            # model define
+            AE = Variational_Autoencoder(
+                max_length=args.max_length,
+                rnn_type=args.rnn_type,
+                feature_size=args.feature_size,
+                hidden_size=args.hidden_size,
+                latent_size=args.latent_size,
+                encoder_dropout=args.encoder_dropout,
+                decoder_dropout=args.decoder_dropout,
+                num_layers=args.num_layers,
+                bidirectional=args.bidirectional,
+                no_mask=args.no_mask or args.use_prob_mask
+                )
+
+        if torch.cuda.is_available():
+            AE = AE.cuda()
+        
+        
+
+        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.learning_rate)
+        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.learning_rate)
+        #
+        if args.dp_sgd == True: # ??
+            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+                                        l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
+            
+            epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
+
+            print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
+
+
+
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
+
+        
+        tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
+        models = {
+            "AE": AE
+        }
+        opts = {
+            "enc": opt_enc,
+            "dec": opt_dec
+        }
+        lrs = {
+            "enc": lr_enc,
+            "dec": lr_dec
+        }
+        min_valid_loss = float("inf")
+        min_valid_path = ""
+        for epoch in range(args.epochs):
+
+            print("Epoch\t%02d/%i"%(epoch, args.epochs))
+            
+            data_loader = DataLoader(
+                dataset=datasets["train"],
+                batch_size=args.batch_size,
+                shuffle=True,
+                num_workers=cpu_count(),
+                pin_memory=torch.cuda.is_available()
+            )
+        
+            log_file = os.path.join(args.result_path, args.train_log)
+            model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+        
+            if epoch % args.valid_eval_freq == 0:
+                data_loader = DataLoader(
+                    dataset=datasets["valid"],
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=cpu_count(),
+                    pin_memory=torch.cuda.is_available()
+                )
+            
+                print("Validation:")
+                log_file = os.path.join(args.result_path, args.valid_log)
+                valid_loss = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                print("****************************************************")
+                print()
+                if valid_loss < min_valid_loss:
+                    min_valid_loss = valid_loss
+                    path = "{}/vae_vloss_{}".format(args.model_path, valid_loss)
+                    min_valid_path = path
+
+                    models = {
+                        "AE": AE
+                    }
+                    save_model(models, path)
+
+            
+        # Generate the synthetic sequences as many as you want 
+        model_path = min_valid_path
+    else:
+        model_path = os.path.join(args.model_path, args.test_model_filename)
+    
+    models = load_model(model_path)
+    AE = models["AE"]
+    AE.eval()
+    
+    gen_zs, gen_xs, gen_ms = [], [], []
+    for i in range(args.gendata_size//args.batch_size):
+        zgen = torch.randn((args.batch_size, args.latent_size))
+        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        
+        gen_zs.append(zgen)
+        gen_xs.append(Pgen)
+        gen_ms.append(Mgen)
+
+    gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
+    gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
+    
+    np.save(os.path.join(args.result_path, 'vae_generated_codes.npy'), gen_zlist)
+    np.save(os.path.join(args.result_path, 'vae_generated_patients.npy'), gen_xlist) 
+
+    if not args.no_mask and not args.use_prob_mask:
+        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+        np.save(os.path.join(args.result_path, 'vae_generated_masks.npy'), gen_mlist)
+
+
+
+def train_seq2seq_model(args, datasets, prob_mask):
+    if not args.test:
+        if args.load_model:
+            model_path = os.path.join(args.model_path, args.pretrained_model_filename)
+            models = load_dgat(model_path)
+            AE = models["AE"]
+            
+        else:
+            # model define
+            AE = Seq2seq_Variatonal_Autoencoder(
+                max_length=args.max_length,
+                rnn_type=args.rnn_type,
+                feature_size=args.feature_size,
+                hidden_size=args.hidden_size,
+                latent_size=args.latent_size,
+                encoder_dropout=args.encoder_dropout,
+                decoder_dropout=args.decoder_dropout,
+                num_layers=args.num_layers,
+                bidirectional=args.bidirectional,
+                use_prob_mask=args.use_prob_mask
+                )
+
+        if torch.cuda.is_available():
+            AE = AE.cuda()
+        
+        
+
+        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.learning_rate)
+        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.learning_rate)
+        #
+        if args.dp_sgd == True: # ??
+            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+                                        l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
+            
+            epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
+
+            print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
+
+
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
+
+        
+
+        tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
+        models = {
+            "AE": AE
+        }
+        opts = {
+            "enc": opt_enc,
+            "dec": opt_dec
+        }
+        lrs = {
+            "enc": lr_enc,
+            "dec": lr_dec
+        }
+        min_valid_loss = float("inf")
+        min_valid_path = ""
+        for epoch in range(args.epochs):
+
+            print("Epoch\t%02d/%i"%(epoch, args.epochs))
+            
+            data_loader = DataLoader(
+                dataset=datasets["train"],
+                batch_size=args.batch_size,
+                shuffle=True,
+                num_workers=cpu_count(),
+                pin_memory=torch.cuda.is_available()
+            )
+        
+            log_file = os.path.join(args.result_path, args.train_log)
+            model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+        
+            if epoch % args.valid_eval_freq == 0:
+                data_loader = DataLoader(
+                    dataset=datasets["valid"],
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=cpu_count(),
+                    pin_memory=torch.cuda.is_available()
+                )
+            
+                print("Validation:")
+                log_file = os.path.join(args.result_path, args.valid_log)
+                valid_loss = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                print("****************************************************")
+                print()
+                if valid_loss < min_valid_loss:
+                    min_valid_loss = valid_loss
+                    path = "{}/seq2seq_vae_vloss_{}".format(args.model_path, valid_loss)
+                    min_valid_path = path
+
+                    models = {
+                        "AE": AE
+                    }
+                    save_model(models, path)
+
+            
+        # Generate the synthetic sequences as many as you want 
+        model_path = min_valid_path
+    else:
+        model_path = os.path.join(args.model_path, args.test_model_filename)
+    
+    models = load_model(model_path)
+    AE = models["AE"]
+    AE.eval()
+    
+    gen_zs, gen_xs, gen_ms = [], [], []
+    for i in range(args.gendata_size//args.batch_size):
+        zgen = torch.randn((args.batch_size, args.latent_size))
+        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        
+        gen_zs.append(zgen)
+        gen_xs.append(Pgen)
+        gen_ms.append(Mgen)
+
+    gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
+    gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
+    gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
+    
+    np.save(os.path.join(args.result_path, 'seq2seq_vae_generated_codes.npy'), gen_zlist)
+    np.save(os.path.join(args.result_path, 'seq2seq_vae_generated_masks.npy'), gen_mlist)
+    np.save(os.path.join(args.result_path, 'seq2seq_vae_generated_patients.npy'), gen_xlist) 
+    
 
 
 def save_model(models, path):
@@ -50,7 +313,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         AE.eval()
 
     for iteration, batch in enumerate(data_loader):
-        batch_size = batch['tempo'].shape[0]
+        batch_size = batch['src_tempo'].shape[0]
         n_data += batch_size
         for k, v in batch.items():
             if torch.is_tensor(v):
@@ -66,19 +329,19 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         #import pdb; pdb.set_trace()
         # Step 0: Evaluate current loss
         if args.no_mask:
-            mu, log_var, Pinput, Poutput, Moutput = AE(batch['tempo'],batch['target'], None, None)
+            mu, log_var, Pinput, Poutput, Moutput = AE(batch['src_tempo'],batch['tgt_tempo'], None, None)
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['target'], None, None)
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['tgt_tempo'], None, None)
         elif args.use_prob_mask:
-            mu, log_var, Pinput, Poutput, Moutput = AE(batch['tempo'], batch['target'], batch["mask"], batch["target_mask"])
-            output_mask = sample_mask_from_prob(prob_mask, batch["target_mask"].shape[0], batch["target_mask"].shape[1])
+            mu, log_var, Pinput, Poutput, Moutput = AE(batch['src_tempo'], batch['tgt_tempo'], batch['src_mask'], batch['tgt_mask'])
+            output_mask = sample_mask_from_prob(prob_mask, batch['tgt_mask'].shape[0], batch['tgt_mask'].shape[1])
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['target'], output_mask, batch["target_mask"])
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['tgt_tempo'], output_mask, batch['tgt_mask'])
         else:
-            mu, log_var, Pinput, Poutput, Moutput = AE(batch['tempo'], batch['target'],  batch["mask"], batch["target_mask"])
+            mu, log_var, Pinput, Poutput, Moutput = AE(batch['src_tempo'], batch['tgt_tempo'],  batch['src_mask'], batch['tgt_mask'])
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['target'], Moutput, batch["target_mask"])
-            mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, batch["target_mask"])
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['tgt_tempo'], Moutput, batch['tgt_mask'])
+            mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, batch['tgt_mask'])
         kld_loss = args.bbeta_kld * AE.compute_kl_diver_loss(mu, log_var)
 
         

@@ -95,7 +95,7 @@ class Decoder(nn.Module):
         # project outputs to feature_size
         logits = self.outputs2feature(torch.reshape(outputs, (-1, outputs.size(2))))
 
-        p_output = nn.functional.leaky_relu(logits, 0.8)
+        p_output = nn.functional.sigmoid(logits)
         p_output = p_output.view(b, s, self.feature_size)
 
         if input_mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
@@ -167,7 +167,7 @@ class Decoder(nn.Module):
             b,s,_ = output.size()
             logits = self.outputs2feature(output.view(-1, output.size(2)))
 
-            input_sequence = nn.functional.leaky_relu(logits, 0.8).view(b, -1)
+            input_sequence = nn.functional.sigmoid(logits).view(b, -1)
             # save next input
             generations = self._save_sample(generations, input_sequence, sequence_running, t+1)
             #import pdb; pdb.set_trace()
@@ -304,19 +304,35 @@ class Seq2seq_Autoencoder(nn.Module):
         return z, p_input, p_output, m_output
 
 
-    def compute_mask_loss(self, output_mask, mask):
-        #loss = torch.mean(torch.sum(torch.square(output_mask-mask), dim=(1, 2)))
-        entropy = torch.mul(mask, torch.log(output_mask + 1e-12)) + torch.mul((1-mask), torch.log((1-output_mask + 1e-12)))
-        loss = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))
+    def compute_mask_loss(self, output_mask, mask, type="xent"):
+        if type == "mse":
+            loss = torch.mean(torch.sum(torch.square(output_mask-mask), dim=(1, 2)))
+        elif type == "xent":
+            entropy = torch.mul(mask, torch.log(output_mask + 1e-12)) + torch.mul((1-mask), torch.log((1-output_mask + 1e-12)))
+            loss = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))
+        else:
+            raise "Wrong loss type"
         return loss
     
 
-    def compute_recon_loss(self, output, target, output_mask=None, mask=None):
-        loss_1 = torch.mean(torch.sum(torch.square(output-target), dim=(1, 2)))
+    def compute_recon_loss(self, output, target, output_mask=None, mask=None, type="xent"):
+        if type == "mse":
+            loss_1 = torch.mean(torch.sum(torch.square(output-target), dim=(1, 2)))
+        elif type == "xent":
+            entropy = torch.mul(target, torch.log(output + 1e-12)) + torch.mul((1-target), torch.log((1-output + 1e-12)))
+            loss_1 = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))
+        else:
+            raise "Wrong loss type"
         if output_mask is not None:
             output = torch.mul(output, output_mask)
         if mask is not None:
             target = torch.mul(target, mask)
-        loss_2 = torch.mean(torch.sum(torch.square(output-target), dim=(1, 2)))
+        if type == "mse":
+            loss_2 = torch.mean(torch.sum(torch.square(output-target), dim=(1, 2)))
+        elif type == "xent":
+            entropy = torch.mul(target, torch.log(output + 1e-12)) + torch.mul((1-target), torch.log((1-output + 1e-12)))
+            loss_2 = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))  
+        else:
+            raise "Wrong loss type"
  
         return (loss_1 + loss_2)/2

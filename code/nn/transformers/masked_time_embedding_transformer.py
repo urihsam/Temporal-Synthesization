@@ -3,7 +3,6 @@ from torch import Tensor
 import torch.nn.functional as f
 from nn.transformers.utils import scaled_dot_product_attention, position_embedding, feed_forward
 
-# https://medium.com/the-dl/transformers-from-scratch-in-pytorch-8777e346ca51
 
 class AttentionHead(torch.nn.Module):
     def __init__(self, dim_in: int, dim_k: int, dim_v: int):
@@ -29,6 +28,8 @@ class MultiHeadAttention(torch.nn.Module):
             torch.cat([h(query, key, value) for h in self.heads], dim=-1)
         )
 
+
+
 class Residual(torch.nn.Module):
     def __init__(self, sublayer: torch.nn.Module, dimension: int, dropout: float = 0.1):
         super().__init__()
@@ -50,6 +51,7 @@ class TransformerEncoderLayer(torch.nn.Module):
         num_heads: int = 6, 
         dim_feedforward: int = 2048, 
         dropout: float = 0.1, 
+        attentioned_mask: bool = False
     ):
         super().__init__()
         dim_k = dim_v = dim_model // num_heads
@@ -64,14 +66,34 @@ class TransformerEncoderLayer(torch.nn.Module):
             dropout=dropout,
         )
 
-    def forward(self, src: Tensor) -> Tensor:
+        self.attentioned_mask = attentioned_mask
+        if self.attentioned_mask:
+            self.attention_m = Residual(
+                MultiHeadAttention(num_heads, dim_model, dim_k, dim_v),
+                dimension=dim_model,
+                dropout=dropout,
+            )
+            self.feed_forward_m = Residual(
+                feed_forward(dim_model, dim_feedforward),
+                dimension=dim_model,
+                dropout=dropout,
+            )
+
+    def forward(self, src: Tensor, src_mask: Tensor = None) -> Tensor:
         src = self.attention(src, src, src)
-        return self.feed_forward(src)
+        src = self.feed_forward(src)
+        if self.attentioned_mask:
+            assert src_mask is not None
+            src_mask = self.attention_m(src_mask, src_mask, src_mask)
+            src_mask = self.feed_forward_m(src_mask)
+        return src, src_mask
 
 
 class TransformerEncoder(torch.nn.Module):
     def __init__(
         self, 
+        time_embedding: Tensor = None,
+        attentioned_mask: bool = False,
         num_layers: int = 6,
         dim_feature: int = 9,
         dim_model: int = 512, 
@@ -81,22 +103,28 @@ class TransformerEncoder(torch.nn.Module):
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-
+        self.time_embedding = time_embedding
+        self.attentioned_mask = attentioned_mask
         self.feature2hidden = torch.nn.Linear(dim_feature, dim_model)
+        if self.attentioned_mask:
+            self.feature2hidden_m = torch.nn.Linear(dim_feature, dim_model)
         self.layers = torch.nn.ModuleList([
-            TransformerEncoderLayer(dim_model, num_heads, dim_feedforward, dropout)
+            TransformerEncoderLayer(dim_model, num_heads, dim_feedforward, dropout, attentioned_mask)
             for _ in range(num_layers)
         ])
 
-    def forward(self, src: Tensor, src_mask: Tensor = None) -> Tensor:
-        if src_mask is not None:
-            src = torch.mul(src, src_mask)
-        #import pdb; pdb.set_trace()
+    def forward(self, src: Tensor, time: Tensor, src_mask: Tensor = None) -> Tensor:
         src = self.feature2hidden(src)
+        if self.attentioned_mask:
+            assert src_mask is not None
+            src_mask = self.feature2hidden_m(src_mask)
         seq_len, dimension = src.size(1), src.size(2)
         src += position_embedding(seq_len, dimension)
+        src += self.time_embedding(time)
         for layer in self.layers:
-            src = layer(src)
+            src, src_mask = layer(src, src_mask)
+            if src_mask is not None:
+                src = torch.mul(src, src_mask)
 
         return src
 
@@ -108,6 +136,7 @@ class TransformerDecoderLayer(torch.nn.Module):
         num_heads: int = 6, 
         dim_feedforward: int = 2048, 
         dropout: float = 0.1, 
+        attentioned_mask: bool = False
     ):
         super().__init__()
         dim_k = dim_v = dim_model // num_heads
@@ -127,15 +156,41 @@ class TransformerDecoderLayer(torch.nn.Module):
             dropout=dropout,
         )
 
-    def forward(self, tgt: Tensor, memory: Tensor) -> Tensor:
+        self.attentioned_mask = attentioned_mask
+        if self.attentioned_mask:
+            self.attention_m_1 = Residual(
+                MultiHeadAttention(num_heads, dim_model, dim_k, dim_v),
+                dimension=dim_model,
+                dropout=dropout,
+            )
+            self.attention_m_2 = Residual(
+                MultiHeadAttention(num_heads, dim_model, dim_k, dim_v),
+                dimension=dim_model,
+                dropout=dropout,
+            )
+            self.feed_forward_m = Residual(
+                feed_forward(dim_model, dim_feedforward),
+                dimension=dim_model,
+                dropout=dropout,
+            )
+
+    def forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor = None) -> Tensor:
         tgt = self.attention_1(tgt, tgt, tgt)
         tgt = self.attention_2(memory, memory, tgt)
-        return self.feed_forward(tgt)
+        tgt = self.feed_forward(tgt)
+        if self.attentioned_mask:
+            assert tgt_mask is not None
+            tgt_mask = self.attention_m_1(tgt_mask, tgt_mask, tgt_mask)
+            tgt_mask = self.attention_m_2(memory, memory, tgt_mask)
+            tgt_mask = self.feed_forward_m(tgt_mask)
+        return tgt, tgt_mask
 
 
 class TransformerDecoder(torch.nn.Module):
     def __init__(
         self, 
+        time_embedding: Tensor = None,
+        attentioned_mask: bool = False,
         num_layers: int = 6,
         max_length: int = 50,
         dim_feature: int = 9,
@@ -148,37 +203,45 @@ class TransformerDecoder(torch.nn.Module):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
 
+        self.time_embedding = time_embedding
         self.use_prob_mask = use_prob_mask
         self.max_length = max_length
         self.feature_size = dim_feature
-        self.dim_model = dim_model
         self.feature2hidden = torch.nn.Linear(dim_feature, dim_model)
         self.layers = torch.nn.ModuleList([
-            TransformerDecoderLayer(dim_model, num_heads, dim_feedforward, dropout)
+            TransformerDecoderLayer(dim_model, num_heads, dim_feedforward, dropout, attentioned_mask)
             for _ in range(num_layers)
         ])
         self.linear = torch.nn.Linear(dim_model, dim_feature)
         self.linear_m = torch.nn.Linear(dim_model, dim_feature)
 
-    def forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor = None) -> Tensor:
-        if tgt_mask is not None:
-            tgt = torch.mul(tgt, tgt_mask)
+    def forward(self, tgt: Tensor, memory: Tensor, time: Tensor, tgt_mask: Tensor = None) -> Tensor:
         tgt = self.feature2hidden(tgt)
+        if self.attentioned_mask:
+            assert tgt_mask is not None
+            tgt_mask = self.feature2hidden_m(tgt_mask)
 
         seq_len, dimension = tgt.size(1), tgt.size(2)
         tgt += position_embedding(seq_len, dimension)
+        tgt += self.time_embedding(time)
         for layer in self.layers:
-            tgt = layer(tgt, memory)
+            tgt, tgt_mask = layer(tgt, memory, tgt_mask)
+            if tgt_mask is not None:
+                tgt = torch.mul(tgt, tgt_mask)
 
         output = torch.nn.functional.sigmoid(self.linear(tgt))
         
         if tgt_mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
             return output, None
-        mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
+        
+        if self.attentioned_mask:
+            mask =  torch.nn.functional.sigmoid(self.linear_m(tgt_mask))
+        else:
+            mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
         return output, mask
 
 
-    def inference(self, start_feature: Tensor, z: Tensor, start_mask: Tensor = None, prob_mask: Tensor = None):
+    def inference(self, start_feature: Tensor, z: Tensor, start_mask: Tensor = None, start_time: Tensor = None, prob_mask: Tensor = None):
         if self.use_prob_mask:
             assert prob_mask is not None and start_mask is not None
         
@@ -197,8 +260,14 @@ class TransformerDecoder(torch.nn.Module):
 
         generations = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float()
         gen_masks = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float()
+
+        '''
+        TODO: time embedding start_age
+        extract increased_age from generated feature, and then embedding it
+        '''
         t=0
-        pos_emb = position_embedding(self.max_length, self.dim_model)[0]
+        time = start_time
+        pos_emb = position_embedding(self.max_length, start_feature.size(-1))[0]
         while(t+1<self.max_length and len(running_seqs)>0):
             batch_size = z.size(0)
             zs = torch.unbind(z, dim=1)
@@ -219,11 +288,14 @@ class TransformerDecoder(torch.nn.Module):
             #import pdb; pdb.set_trace()
             input_ = self.feature2hidden(input_)
 
-            input_batch_size, seq_len, dimension = input_.size(0), input_.size(1), input_.size(2)
+            input_batch_size = input_.size(0)
             if input_batch_size != batch_size:
                 import pdb; pdb.set_trace()
-            #import pdb; pdb.set_trace()
-            input_ += pos_emb[t] # position_embedding(seq_len, dimension)
+            # position embedding
+            input_ += pos_emb[t]
+            # time embedding
+            input_ += self.time_embedding(time)
+
             for layer in self.layers:
                 try:
                     input_ = layer(input_, z_)
@@ -269,7 +341,10 @@ class TransformerDecoder(torch.nn.Module):
                     input_mask = input_mask[running_seqs]
 
                 running_seqs = torch.arange(0, len(running_seqs), out=self.tensor()).long()
-
+            
+            # get incr time, update time
+            time += extract_incr_time_from_tempo_step(input_sequence)
+            #
             t += 1
 
         output = generations
@@ -300,16 +375,21 @@ class Transformer(torch.nn.Module):
         num_decoder_layers: int = 6,
         max_length: int = 50,
         dim_feature: int = 9,
-        dim_model: int = 512, 
+        dim_model: int = 512,
+        dim_age: int = 100, 
         num_heads: int = 6, 
         dim_feedforward: int = 2048, 
         encoder_dropout: float = 0.1, 
         decoder_dropout: float = 0.1, 
         activation: torch.nn.Module = torch.nn.ReLU(),
+        attentioned_mask: bool = False,
         use_prob_mask: bool = False,
     ):
         super().__init__()
+        self.time_embedding = torch.nn.Embedding(dim_age, dim_model) # an embedding lookup dict with key range from 0 to dim_age-1
         self.encoder = TransformerEncoder(
+            time_embedding=self.time_embedding,
+            attentioned_mask=attentioned_mask,
             num_layers=num_encoder_layers,
             dim_feature=dim_feature,
             dim_model=dim_model,
@@ -318,6 +398,8 @@ class Transformer(torch.nn.Module):
             dropout=encoder_dropout,
         )
         self.decoder = TransformerDecoder(
+            time_embedding=self.time_embedding,
+            attentioned_mask=attentioned_mask,
             num_layers=num_decoder_layers,
             max_length=max_length,
             dim_feature=dim_feature,
@@ -331,7 +413,6 @@ class Transformer(torch.nn.Module):
     def forward(self, src: Tensor, tgt: Tensor, src_mask: Tensor = None, tgt_mask: Tensor = None) -> Tensor:
         src = src.float(); src_mask = src_mask.float()
         tgt = tgt.float(); tgt_mask = tgt_mask.float()
-        #import pdb; pdb.set_trace()
         memory = self.encoder(src, src_mask)
         output, mask = self.decoder(src, memory, src_mask)
         # build a target prob tensor

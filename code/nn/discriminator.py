@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn_utils
+import torch.nn.utils.spectral_norm as spectral_norm
 from utils.train_utils import to_var
 
 
 class MLP_Discriminator(nn.Module):
-    def __init__(self, input_size, output_size, archs, activation=nn.LeakyReLU(0.2)):
+    def __init__(self, input_size, output_size, archs, activation=nn.LeakyReLU(0.2), use_spectral_norm=False):
         super().__init__()
         self.input_size = input_size
         self.output_size = output_size
@@ -14,10 +15,16 @@ class MLP_Discriminator(nn.Module):
         layers = []
 
         for i in range(len(layer_sizes)-1):
-            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
+            layer_ = nn.Linear(layer_sizes[i], layer_sizes[i+1])
+            if use_spectral_norm:
+                layer_ = spectral_norm(layer_)
+            layers.append(layer_)
             layers.append(activation)
 
-        layers.append(nn.Linear(layer_sizes[-1], output_size))
+        layer_ = nn.Linear(layer_sizes[-1], output_size)
+        if use_spectral_norm:
+            layer_ = spectral_norm(layer_)
+        layers.append(layer_)
         self.layers = nn.ModuleList(layers)
 
     def forward(self, x):
@@ -49,7 +56,7 @@ class MLP_Discriminator(nn.Module):
 
 class CNN_Discriminator(nn.Module):
 
-    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes):
+    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False):
         super().__init__()
         self.feature_size = feature_size
         self.feature_dropout = nn.Dropout(p=feature_dropout)
@@ -57,8 +64,19 @@ class CNN_Discriminator(nn.Module):
         self.filter_size = filter_size
         self.window_sizes = window_sizes
 
-        self.convs = nn.ModuleList([torch.nn.Conv2d(1, filter_size, (window_size, self.feature_size), padding=(1, 0)) for window_size in window_sizes])
-        self.feature2binary = nn.Linear(filter_size * len(window_sizes), 1)
+        layers = []
+        for window_size in window_sizes:
+            layer_ = torch.nn.Conv2d(1, filter_size, (window_size, self.feature_size), padding=(1, 0))
+            if use_spectral_norm:
+                layer_ = spectral_norm(layer_)
+            layers.append(layer_)
+
+        self.convs = nn.ModuleList(layers)
+
+        layer_ = nn.Linear(filter_size * len(window_sizes), 1)
+        if use_spectral_norm:
+            layer_ = spectral_norm(layer_)
+        self.feature2binary = layer_
 
     def forward(self, prob_sequence, input_mask=None):
         batch_size = prob_sequence.size(0)

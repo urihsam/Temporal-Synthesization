@@ -10,24 +10,48 @@ from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 
 
+def model_inference(args, model, zgen, prob_mask, **kwargs):
+    # make up start feature
+    start_feature, start_mask = sample_start_feature_mask(zgen.size(0))
+    if args.no_mask:
+        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+    elif args.use_prob_mask:
+        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+    else:
+        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+
+    return Pgen, Mgen
+
+
 def to_var(x, volatile=False):
     if torch.cuda.is_available():
         x = x.cuda()
     return Variable(x, volatile=volatile)
 
 
-def sample_start_feature_and_mask(batch_size, infer_info):
-    padding = torch.zeros(batch_size, 2, dtype=torch.float)
-    #age = torch.tensor(np.random.randint(40, 60, size=(batch_size, 1)), dtype=torch.float)
-    #year = torch.tensor(np.random.rand(batch_size, 1) * 10 + 38, dtype=torch.float)
-    age = torch.tensor(np.random.normal(loc=infer_info["age_mean"], scale=infer_info["age_std"], size=(batch_size, 1)), dtype=torch.float)
-    year = torch.tensor(np.random.normal(loc=infer_info["year_mean"], scale=infer_info["year_std"], size=(batch_size, 1)), dtype=torch.float)
-    gender = torch.nn.functional.one_hot(torch.tensor(np.random.randint(0, 2, size=batch_size)), num_classes=2).float()
-    race = torch.nn.functional.one_hot(torch.tensor(np.random.randint(0, 3, size=batch_size)), num_classes=3).float()
-    start_feature = torch.cat((padding, age, year, gender, race), 1)
-    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([0,0]+[1]*7), 0), [batch_size, 1]))
+def sample_start_feature_mask(batch_size):
+    padding = torch.zeros(batch_size, 7, dtype=torch.float)
+    age = torch.tensor(np.random.uniform(size=(batch_size, 1)), dtype=torch.float)
+    year = torch.tensor(np.random.uniform(size=(batch_size, 1)), dtype=torch.float)
+    start_feature = torch.cat((age, year, padding), 1)
+    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1,1]+[0]*7), 0), [batch_size, 1]))
 
     return start_feature, start_mask
+
+
+def extract_time_from_start_feature(start_feature):
+    assert len(start_feature.shape) == 2
+    import pdb; pdb.set_trace()
+    return start_feature[:, 3] # [batch_size, 1]
+
+
+def extract_incr_time_from_tempo_step(temporal_step_feature):
+    assert len(temporal_step_feature.shape) == 2
+    import pdb; pdb.set_trace()
+    return temporal_step_feature[:, -1] # [batch_size, 1]
+
+def descale_time(scaled_time, shift, scale):
+    return np.floor(scaled_time * scale + shift)#.astype(int)
 
 
 def sample_mask_from_prob(prob_mask, batch_size, steps):

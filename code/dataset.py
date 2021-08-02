@@ -64,10 +64,16 @@ class EHR(Dataset):
     def __getitem__(self, idx):
         
         return {
-            "tempo": np.asarray(self.data[idx]["tempo"]),
-            "target": np.asarray(self.data[idx]["target"]),
-            "mask": np.asarray(self.data[idx]["mask"]),
-            "target_mask": np.asarray(self.data[idx]["target_mask"])
+            "gender": np.asarray(self.data[idx]["gender"]).astype(float),
+            "race": np.asarray(self.data[idx]["race"]).astype(float),
+            "src_tempo": np.asarray(self.data[idx]["src_tempo"]).astype(float),
+            "src_mask": np.asarray(self.data[idx]["src_mask"]).astype(float),
+            "src_time": np.asarray(self.data[idx]["src_time"]).astype(float),
+            "src_ava": np.asarray(self.data[idx]["src_ava"]).astype(float),
+            "tgt_tempo": np.asarray(self.data[idx]["tgt_tempo"]).astype(float),
+            "tgt_mask": np.asarray(self.data[idx]["tgt_mask"]).astype(float),
+            "tgt_time": np.asarray(self.data[idx]["tgt_time"]).astype(float),
+            "tgt_ava": np.asarray(self.data[idx]["tgt_ava"]).astype(float)
         }
 
  
@@ -75,38 +81,78 @@ class EHR(Dataset):
         examples = []
         for idx in index:
             ex = data[idx]
-            struc = ex["struc"]
-            mask = ex["mask"]
-            tempo = ex["tempo"]
+            #
+            gender = ex["gender"] # scalar
+            race = ex["race"] # scalar
+            start_age_year = ex["start_age_year"] # [1, 2]
+            mask = ex["mask"] # [time_len, 9]
+            tempo = ex["tempo"] # [time_len, 9]
+            time = np.floor(ex["time"])#.astype(int) # [time_en]
             # add struc into tempo
-            padding = np.array([0.0, 0.0])
-            struc = [padding] + struc
-            extra = np.expand_dims(np.concatenate(struc, 0), 0)
-            extra_mask = np.expand_dims(np.array([0,0]+[1]*7), 0)
+            padding = np.array([[0.0]*7])
+            extra =  np.concatenate([start_age_year, padding], 1) # [1, 9]
+            extra_mask = np.array([[1,1]+[0]*7])
+            # add extra info at start feature
             tempo = np.concatenate([extra, tempo], 0)
             mask = np.concatenate([extra_mask, mask], 0)
+            time = np.concatenate([[time[0]], time], 0)
             # cut or padding
-            padding = np.expand_dims(np.array([0.0]*9), 0)
-            if tempo.shape[0] > self.max_length:
-                tempo = tempo[:self.max_length, :]
-                target = np.concatenate([tempo[1:, :], tempo[[-1], :]], 0)
-                mask = mask[:self.max_length, :]
-                target_mask = np.concatenate([mask[1:, :], mask[[-1], :]], 0)
+            padding = np.array([[0.0]*9]) # [1, 9]
+            
+            if tempo.shape[0] >= self.max_length+1:
+                # src
+                src_tempo = tempo[:self.max_length, :] 
+                src_mask = mask[:self.max_length, :]
+                src_time = time[:self.max_length]
+                src_ava = np.ones((self.max_length,), dtype=int) # available time points
+                # tgt
+                tgt_tempo = tempo[1:self.max_length+1, :] 
+                tgt_mask = mask[1:self.max_length+1, :]
+                tgt_time = time[1:self.max_length+1]
+                tgt_ava = np.ones((self.max_length,), dtype=int) # available time points
+
+                try:
+                    assert tgt_tempo.shape[0] == self.max_length
+                    assert src_tempo.shape[0] == self.max_length
+                except:
+                    import pdb; pdb.set_trace()
             else:
                 add = self.max_length - tempo.shape[0]
-                target = np.concatenate([tempo[1:, :], tempo[[-1], :]]+[padding]*add, 0)
-                tempo = np.concatenate([tempo]+[padding]*add, 0)
-                target_mask = np.concatenate([mask[1:, :], mask[[-1], :]]+[padding]*add, 0)
-                mask = np.concatenate([mask]+[padding]*add, 0)
+                # src
+                src_tempo = np.concatenate([tempo]+[padding]*add, 0)
+                src_mask = np.concatenate([mask]+[padding]*add, 0)
+                src_time = np.concatenate([time, [0.0]*add], 0)
+                src_ava = np.concatenate([np.ones((tempo.shape[0],), dtype=int), np.zeros((add,), dtype=int)], 0)# available time points
+                # tgt
+                tgt_tempo = np.concatenate([tempo[1:, :], tempo[[-1], :]]+[padding]*add, 0)
+                tgt_mask = np.concatenate([mask[1:, :], mask[[-1], :]]+[padding]*add, 0)
+                end_time = time[-1]*2-time[-2]
+                tgt_time = np.concatenate([time[1:], [end_time], [0.0]*add], 0)
+                tgt_ava = np.concatenate([np.ones((tempo.shape[0],), dtype=int), np.zeros((add,), dtype=int)], 0)# available time points
+
+                try:
+                    assert tgt_tempo.shape[0] == self.max_length
+                    assert src_tempo.shape[0] == self.max_length
+                except:
+                    import pdb; pdb.set_trace()
+                
+            
                 
 
 
             # append
             example = {
-                "tempo": tempo,
-                "target": target,
-                "mask": mask,
-                "target_mask": target_mask
+                "gender": gender,
+                "race": race,
+                #
+                "src_tempo": src_tempo,
+                "src_mask": src_mask,
+                "src_time": src_time,
+                "src_ava": src_ava,
+                "tgt_tempo": tgt_tempo,
+                "tgt_mask": tgt_mask,
+                "tgt_time": tgt_time,
+                "tgt_ava": tgt_ava
             }
             examples.append(example)
 
