@@ -333,7 +333,7 @@ class Transformer(torch.nn.Module):
         tgt = tgt.float(); tgt_mask = tgt_mask.float()
         #import pdb; pdb.set_trace()
         memory = self.encoder(src, src_mask)
-        output, mask = self.decoder(src, memory, src_mask)
+        output, mask = self.decoder(tgt, memory, tgt_mask)
         # build a target prob tensor
         if tgt_mask == None:
             p_input = tgt

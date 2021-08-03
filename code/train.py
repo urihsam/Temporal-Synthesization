@@ -12,6 +12,7 @@ from collections import OrderedDict, defaultdict
 from dataset import EHR
 from utils.aae_utils import train_model as train_aae
 from utils.daae_utils import train_model as train_daae
+from utils.dgamt_utils import train_model as train_dgamt
 from utils.dgat_utils import train_model as train_dgat
 from utils.dgatt_utils import train_model as train_dgatt
 from utils.vae_gan_utils import train_model as train_vae_gan
@@ -81,6 +82,12 @@ def main(args):
         """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
         """
         train_dgatt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+
+
+    elif args.model_type == "dgamt": # dual generative adversarial time-embedding transformer
+        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
+        """
+        train_dgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
     
     
 
@@ -106,6 +113,7 @@ if __name__ == '__main__':
     parser.add_argument('--critic_freq_base', type=int, default=5)
     parser.add_argument('--critic_freq_hit', type=int, default=1)
     parser.add_argument('--use_spectral_norm', type=bool, default=False)
+    parser.add_argument('--use_attentioned_mask', type=bool, default=False)
     parser.add_argument('--no_mask', type=bool, default=False)
     parser.add_argument('--use_prob_mask', type=bool, default=False)
     parser.add_argument('--prob_mask_filename', type=str, default='not_nan_prob.npy')

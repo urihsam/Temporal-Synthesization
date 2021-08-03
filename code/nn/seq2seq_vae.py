@@ -201,11 +201,11 @@ class Decoder(nn.Module):
             #
             # update gloabl running sequence
             sequence_length[sequence_running] += 1
-            sequence_mask[sequence_running] = (input_sequence.sum(dim=1) != 0).data # ??
+            sequence_mask[sequence_running] = (input_sequence.sum(dim=1) > 0).data # ??
             sequence_running = sequence_idx.masked_select(sequence_mask)
             
             # update local running sequences
-            running_mask = (input_sequence.sum(dim=1) != 0).data # ??
+            running_mask = (input_sequence.sum(dim=1) > 0).data # ??
             running_seqs = running_seqs.masked_select(running_mask)
 
             # prune input and hidden state according to local update
