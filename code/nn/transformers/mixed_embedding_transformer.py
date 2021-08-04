@@ -92,7 +92,9 @@ class TransformerEncoderLayer(torch.nn.Module):
 class TransformerEncoder(torch.nn.Module):
     def __init__(
         self, 
-        time_embedding: Tensor=None,
+        time_embedding: Tensor = None,
+        gender_embedding: Tensor = None,
+        race_embedding: Tensor = None,
         attentioned_mask: bool = False,
         num_layers: int = 6,
         dim_feature: int = 9,
@@ -104,6 +106,8 @@ class TransformerEncoder(torch.nn.Module):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
         self.time_embedding = time_embedding
+        self.gender_embedding = gender_embedding
+        self.race_embedding = race_embedding
         self.attentioned_mask = attentioned_mask
         self.feature2hidden = torch.nn.Linear(dim_feature, dim_model)
         if self.attentioned_mask:
@@ -113,20 +117,26 @@ class TransformerEncoder(torch.nn.Module):
             for _ in range(num_layers)
         ])
 
-    def forward(self, src: Tensor, time: Tensor, src_mask: Tensor = None) -> Tensor:
-        if not self.attentioned_mask and src_mask is not None:
-            src = torch.mul(src, src_mask)
+    def forward(self, src: Tensor, time: Tensor, gender: Tensor, race: Tensor, 
+                mask: Tensor = None, ava: Tensor = None) -> Tensor:
+        #import pdb; pdb.set_trace()
+        if ava is not None:
+            src = torch.mul(src, ava)
+        if not self.attentioned_mask and mask is not None:
+            src = torch.mul(src, mask)
         src = self.feature2hidden(src)
         if self.attentioned_mask:
-            assert src_mask is not None
-            src_mask = self.feature2hidden_m(src_mask)
+            assert mask is not None
+            mask = self.feature2hidden_m(mask)
         seq_len, dimension = src.size(1), src.size(2)
         src += position_embedding(seq_len, dimension)
         src += self.time_embedding(time)
+        src += self.gender_embedding(gender)
+        src += self.race_embedding(race)
         for layer in self.layers:
-            src, src_mask = layer(src, src_mask)
+            src, mask = layer(src, mask)
             if self.attentioned_mask:
-                src = torch.mul(src, src_mask)
+                src = torch.mul(src, mask)
 
         return src
 
@@ -191,7 +201,9 @@ class TransformerDecoderLayer(torch.nn.Module):
 class TransformerDecoder(torch.nn.Module):
     def __init__(
         self, 
-        time_embedding: Tensor=None,
+        time_embedding: Tensor = None,
+        gender_embedding: Tensor = None,
+        race_embedding: Tensor = None,
         attentioned_mask: bool = False,
         num_layers: int = 6,
         max_length: int = 50,
@@ -207,6 +219,8 @@ class TransformerDecoder(torch.nn.Module):
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
 
         self.time_embedding = time_embedding
+        self.gender_embedding = gender_embedding
+        self.race_embedding = race_embedding
         self.attentioned_mask = attentioned_mask
         self.use_prob_mask = use_prob_mask
         self.max_length = max_length
@@ -223,30 +237,34 @@ class TransformerDecoder(torch.nn.Module):
         self.linear = torch.nn.Linear(dim_model, dim_feature)
         self.linear_m = torch.nn.Linear(dim_model, dim_feature)
 
-    def forward(self, tgt: Tensor, memory: Tensor, time: Tensor, tgt_mask: Tensor = None) -> Tensor:
-        if not self.attentioned_mask and tgt_mask is not None:
-            tgt = torch.mul(tgt, tgt_mask)
+    def forward(self, tgt: Tensor, memory: Tensor, time: Tensor, gender: Tensor, race: Tensor, 
+                mask: Tensor = None, ava: Tensor = None) -> Tensor:
+        if ava is not None:
+            tgt = torch.mul(tgt, ava)
+        if not self.attentioned_mask and mask is not None:
+            tgt = torch.mul(tgt, mask)
         tgt = self.feature2hidden(tgt)
         if self.attentioned_mask:
-            assert tgt_mask is not None
-            tgt_mask = self.feature2hidden_m(tgt_mask)
-        
+            assert mask is not None
+            mask = self.feature2hidden_m(mask)
 
         seq_len, dimension = tgt.size(1), tgt.size(2)
         tgt += position_embedding(seq_len, dimension)
         tgt += self.time_embedding(time)
+        tgt += self.gender_embedding(gender)
+        tgt += self.race_embedding(race)
         for layer in self.layers:
-            tgt, tgt_mask = layer(tgt, memory, tgt_mask)
+            tgt, mask = layer(tgt, memory, mask)
             if self.attentioned_mask:
-                tgt = torch.mul(tgt, tgt_mask)
+                tgt = torch.mul(tgt, mask)
 
         output = torch.nn.functional.sigmoid(self.linear(tgt))
         
-        if tgt_mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
+        if mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
             return output, None
         
         if self.attentioned_mask:
-            mask =  torch.nn.functional.sigmoid(self.linear_m(tgt_mask))
+            mask =  torch.nn.functional.sigmoid(self.linear_m(mask))
         else:
             mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
         return output, mask
@@ -259,6 +277,8 @@ class TransformerDecoder(torch.nn.Module):
         time_shift = kwargs["time_shift"]
         time_scale = kwargs["time_scale"]
         start_time = kwargs["start_time"]
+        gender = kwargs["gender"]
+        race = kwargs["race"]
 
         z = z.cuda()
         batch_size = z.size(0)
@@ -313,6 +333,9 @@ class TransformerDecoder(torch.nn.Module):
             input_ += pos_emb[t] # position_embedding(seq_len, dimension)
             # time embedding, de-scale before embedding
             input_ += self.time_embedding(descaled_time)
+            #
+            input_ += self.gender_embedding(gender.cuda())
+            input_ += self.race_embedding(race.cuda())
             
             for layer in self.layers:
                 try:
@@ -372,6 +395,8 @@ class TransformerDecoder(torch.nn.Module):
                     input_mask = input_mask[running_seqs]
                 time = time[running_seqs]
                 descaled_time = descaled_time[running_seqs]
+                gender = gender[running_seqs]
+                race = race[running_seqs]
                 
                 running_seqs = torch.arange(0, len(running_seqs), out=self.tensor()).long()
             #
@@ -416,9 +441,14 @@ class Transformer(torch.nn.Module):
         use_prob_mask: bool = False,
     ):
         super().__init__()
-        self.time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_age-1
+        self.time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
+        self.gender_embedding = torch.nn.Embedding(2, dim_model)
+        self.race_embedding = torch.nn.Embedding(3, dim_model)
+
         self.encoder = TransformerEncoder(
             time_embedding=self.time_embedding,
+            gender_embedding=self.gender_embedding,
+            race_embedding=self.race_embedding,
             attentioned_mask=attentioned_mask,
             num_layers=num_encoder_layers,
             dim_feature=dim_feature,
@@ -429,6 +459,8 @@ class Transformer(torch.nn.Module):
         )
         self.decoder = TransformerDecoder(
             time_embedding=self.time_embedding,
+            gender_embedding=self.gender_embedding,
+            race_embedding=self.race_embedding,
             attentioned_mask=attentioned_mask,
             num_layers=num_decoder_layers,
             max_length=max_length,
@@ -442,12 +474,19 @@ class Transformer(torch.nn.Module):
         )
 
     def forward(self, src: Tensor, tgt: Tensor, src_time: Tensor, tgt_time: Tensor, 
-                src_mask: Tensor = None, tgt_mask: Tensor = None) -> Tensor:
-        src = src.float(); src_time=src_time.int(); src_mask = src_mask.float()
-        tgt = tgt.float(); tgt_time=tgt_time.int(); tgt_mask = tgt_mask.float()
+                gender: Tensor, race: Tensor, src_mask: Tensor = None, tgt_mask: Tensor = None, 
+                src_ava: Tensor = None, tgt_ava: Tensor = None) -> Tensor:
+        
+        src = src.float(); src_time=src_time.int() 
+        tgt = tgt.float(); tgt_time=tgt_time.int()
+        gender = gender.int(); race=race.int()
+        if src_mask is not None: src_mask = src_mask.float()
+        if tgt_mask is not None: tgt_mask = tgt_mask.float()
+        if src_ava is not None: src_ava = src_ava.float()
+        if tgt_ava is not None: tgt_ava = tgt_ava.float()
         #import pdb; pdb.set_trace()
-        memory = self.encoder(src, src_time, src_mask)
-        output, mask = self.decoder(tgt, memory, tgt_time, tgt_mask)
+        memory = self.encoder(src, src_time, gender, race, src_mask, src_ava)
+        output, mask = self.decoder(tgt, memory, tgt_time, gender, race, tgt_mask, tgt_ava)
         # build a target prob tensor
         if tgt_mask == None:
             p_input = tgt

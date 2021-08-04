@@ -326,22 +326,24 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             one = one.cuda()
             mone = mone.cuda()
         
+        src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
+        src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
         #import pdb; pdb.set_trace()
         # Step 0: Evaluate current loss
         if args.no_mask:
-            mu, log_var, Pinput, Poutput, Moutput = AE(batch['src_tempo'],batch['tgt_tempo'], None, None)
+            mu, log_var, Pinput, Poutput, Moutput = AE(src_tempo, tgt_tempo, None, None)
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['tgt_tempo'], None, None)
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            mu, log_var, Pinput, Poutput, Moutput = AE(batch['src_tempo'], batch['tgt_tempo'], batch['src_mask'], batch['tgt_mask'])
-            output_mask = sample_mask_from_prob(prob_mask, batch['tgt_mask'].shape[0], batch['tgt_mask'].shape[1])
+            mu, log_var, Pinput, Poutput, Moutput = AE(src_tempo, tgt_tempo, src_mask, tgt_mask)
+            output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['tgt_tempo'], output_mask, batch['tgt_mask'])
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            mu, log_var, Pinput, Poutput, Moutput = AE(batch['src_tempo'], batch['tgt_tempo'],  batch['src_mask'], batch['tgt_mask'])
+            mu, log_var, Pinput, Poutput, Moutput = AE(src_tempo, tgt_tempo, src_mask, tgt_mask)
             # loss
-            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, batch['tgt_tempo'], Moutput, batch['tgt_mask'])
-            mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, batch['tgt_mask'])
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
+            mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, tgt_mask)
         kld_loss = args.bbeta_kld * AE.compute_kl_diver_loss(mu, log_var)
 
         

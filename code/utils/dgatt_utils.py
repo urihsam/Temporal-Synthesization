@@ -279,6 +279,10 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             one = one.cuda()
             mone = mone.cuda()
         
+        src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
+        src_time = batch['src_time']; tgt_time = batch['tgt_time']
+        src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
+
         #import pdb; pdb.set_trace()
         # Step 0: Evaluate current loss
         
@@ -286,22 +290,22 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         #print("max tgt_time", torch.amax(batch['tgt_time'], [0,1]), " -- min tgt_time", torch.amin(batch['tgt_time'], [0,1]))
         
         if args.no_mask:
-            z, Pinput, Poutput, Moutput = Trans(batch['src_tempo'], batch['tgt_tempo'], batch['src_time'], batch['tgt_time'], 
+            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, 
                                                 None, None)
             # loss
-            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, batch['tgt_tempo'], None, None)
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, Moutput = Trans(batch['src_tempo'], batch['tgt_tempo'], batch['src_time'], batch['tgt_time'], 
-                                                batch['src_mask'], batch['tgt_mask'])
-            output_mask = sample_mask_from_prob(prob_mask, batch['tgt_mask'].shape[0], batch['tgt_mask'].shape[1])
+            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, 
+                                                src_mask, tgt_mask)
+            output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
             # loss
-            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, batch['tgt_tempo'], output_mask, batch['tgt_mask'])
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            z, Pinput, Poutput, Moutput = Trans(batch['src_tempo'], batch['tgt_tempo'], batch['src_time'], batch['tgt_time'], 
-                                                batch['src_mask'], batch['tgt_mask'])
+            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, 
+                                                src_mask, tgt_mask)
             # loss
-            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, batch['tgt_tempo'], Moutput, batch['tgt_mask'])
-            mask_loss = args.beta_mask * Trans.compute_mask_loss(Moutput, batch['tgt_mask'])
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
+            mask_loss = args.beta_mask * Trans.compute_mask_loss(Moutput, tgt_mask)
 
         zgen = G(batch_size=z.size(0)*args.max_length)
         zgen = torch.reshape(zgen, (z.size(0), args.max_length, -1))

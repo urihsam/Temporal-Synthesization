@@ -15,6 +15,11 @@ def model_inference(args, model, zgen, prob_mask, **kwargs):
     start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
+    if args.model_type == "dgamt" or args.model_type == "adgamt":
+        kwargs["start_time"] = start_time
+        sampled_gender, sampled_race = sample_gender_race(zgen.size(0))
+        kwargs["gender"] = sampled_gender
+        kwargs["race"] = sampled_race
     if args.no_mask:
         Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
     elif args.use_prob_mask:
@@ -29,6 +34,12 @@ def to_var(x, volatile=False):
     if torch.cuda.is_available():
         x = x.cuda()
     return Variable(x, volatile=volatile)
+
+
+def sample_gender_race(batch_size):
+    gender = torch.randint(0, 2, (batch_size, 1))
+    race = torch.randint(0, 3, (batch_size, 1))
+    return gender.int(), race.int()
 
 
 def sample_start_feature_mask(batch_size):

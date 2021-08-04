@@ -104,12 +104,12 @@ class EHR(Dataset):
                 src_tempo = tempo[:self.max_length, :] 
                 src_mask = mask[:self.max_length, :]
                 src_time = time[:self.max_length]
-                src_ava = np.ones((self.max_length,), dtype=int) # available time points
+                src_ava = np.ones((self.max_length, 1), dtype=int) # available time points
                 # tgt
                 tgt_tempo = tempo[1:self.max_length+1, :] 
                 tgt_mask = mask[1:self.max_length+1, :]
                 tgt_time = time[1:self.max_length+1]
-                tgt_ava = np.ones((self.max_length,), dtype=int) # available time points
+                tgt_ava = np.ones((self.max_length, 1), dtype=int) # available time points
 
                 try:
                     assert tgt_tempo.shape[0] == self.max_length
@@ -122,13 +122,13 @@ class EHR(Dataset):
                 src_tempo = np.concatenate([tempo]+[padding]*add, 0)
                 src_mask = np.concatenate([mask]+[padding]*add, 0)
                 src_time = np.concatenate([time, [0.0]*add], 0)
-                src_ava = np.concatenate([np.ones((tempo.shape[0],), dtype=int), np.zeros((add,), dtype=int)], 0)# available time points
+                src_ava = np.concatenate([np.ones((tempo.shape[0], 1), dtype=int), np.zeros((add, 1), dtype=int)], 0)# available time points
                 # tgt
                 tgt_tempo = np.concatenate([tempo[1:, :], tempo[[-1], :]]+[padding]*add, 0)
                 tgt_mask = np.concatenate([mask[1:, :], mask[[-1], :]]+[padding]*add, 0)
                 end_time = time[-1]*2-time[-2]
                 tgt_time = np.concatenate([time[1:], [end_time], [0.0]*add], 0)
-                tgt_ava = np.concatenate([np.ones((tempo.shape[0],), dtype=int), np.zeros((add,), dtype=int)], 0)# available time points
+                tgt_ava = np.concatenate([np.ones((tempo.shape[0], 1), dtype=int), np.zeros((add, 1), dtype=int)], 0)# available time points
 
                 try:
                     assert tgt_tempo.shape[0] == self.max_length
@@ -142,8 +142,8 @@ class EHR(Dataset):
 
             # append
             example = {
-                "gender": gender,
-                "race": race,
+                "gender": np.expand_dims(gender, 0),
+                "race": np.expand_dims(race, 0),
                 #
                 "src_tempo": src_tempo,
                 "src_mask": src_mask,

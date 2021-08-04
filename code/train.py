@@ -11,6 +11,7 @@ from collections import OrderedDict, defaultdict
 
 from dataset import EHR
 from utils.aae_utils import train_model as train_aae
+from utils.adgamt_utils import train_model as train_adgamt
 from utils.daae_utils import train_model as train_daae
 from utils.dgamt_utils import train_model as train_dgamt
 from utils.dgat_utils import train_model as train_dgat
@@ -88,6 +89,13 @@ def main(args):
         """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
         """
         train_dgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+
+    
+    elif args.model_type == "adgamt": # dual generative adversarial time-embedding transformer
+        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
+        The discriminator for output data uses auxiliary classification with race and gender
+        """
+        train_adgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
     
     
 
