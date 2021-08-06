@@ -105,6 +105,12 @@ class TransformerEncoder(torch.nn.Module):
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
+        if time_embedding is None:
+            time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
+        if gender_embedding is None:
+            gender_embedding = torch.nn.Embedding(2, dim_model)
+        if race_embedding is None:
+            race_embedding = torch.nn.Embedding(3, dim_model)
         self.time_embedding = time_embedding
         self.gender_embedding = gender_embedding
         self.race_embedding = race_embedding
@@ -218,6 +224,12 @@ class TransformerDecoder(torch.nn.Module):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
 
+        if time_embedding is None:
+            time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
+        if gender_embedding is None:
+            gender_embedding = torch.nn.Embedding(2, dim_model)
+        if race_embedding is None:
+            race_embedding = torch.nn.Embedding(3, dim_model)
         self.time_embedding = time_embedding
         self.gender_embedding = gender_embedding
         self.race_embedding = race_embedding
@@ -260,7 +272,7 @@ class TransformerDecoder(torch.nn.Module):
 
         output = torch.nn.functional.sigmoid(self.linear(tgt))
         
-        if mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
+        if mask is None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
             return output, None
         
         if self.attentioned_mask:

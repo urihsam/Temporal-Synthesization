@@ -82,6 +82,8 @@ class TransformerEncoder(torch.nn.Module):
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
+        if time_embedding is None:
+            time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
         self.time_embedding = time_embedding
         self.feature2hidden = torch.nn.Linear(dim_feature, dim_model)
         self.layers = torch.nn.ModuleList([
@@ -152,7 +154,8 @@ class TransformerDecoder(torch.nn.Module):
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-
+        if time_embedding is None:
+            time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
         self.time_embedding = time_embedding
         self.use_prob_mask = use_prob_mask
         self.max_length = max_length

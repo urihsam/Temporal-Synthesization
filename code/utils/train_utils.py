@@ -10,22 +10,22 @@ from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 
 
-def model_inference(args, model, zgen, prob_mask, **kwargs):
+def model_inference(args, decoder, zgen, prob_mask, **kwargs):
     # make up start feature
     start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
-    if args.model_type == "dgamt" or args.model_type == "adgamt":
+    if args.model_type == "dgamt" or args.model_type == "adgamt" or args.model_type == "tgamt":
         kwargs["start_time"] = start_time
         sampled_gender, sampled_race = sample_gender_race(zgen.size(0))
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
     if args.no_mask:
-        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+        Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
     elif args.use_prob_mask:
-        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+        Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
     else:
-        Pgen, Mgen = model.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+        Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
 
     return Pgen, Mgen
 
@@ -49,11 +49,11 @@ def sample_start_feature_mask(batch_size):
 
 
 def sample_start_feature_time_mask(batch_size):
-    padding = torch.zeros(batch_size, 7, dtype=torch.float)
+    padding = torch.zeros(batch_size, 1, dtype=torch.float)
     age = torch.tensor(np.random.uniform(size=(batch_size, 1))*0.9, dtype=torch.float)
     year = torch.tensor(np.random.uniform(size=(batch_size, 1))*0.9, dtype=torch.float)
-    start_feature = torch.cat((age, year, padding), 1)
-    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1,1]+[0]*7), 0), [batch_size, 1]))
+    start_feature = torch.cat((age, year, age, year, age, year, age, year, padding), 1)
+    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1]*8+[0]), 0), [batch_size, 1]))
 
     return start_feature, year, start_mask
 

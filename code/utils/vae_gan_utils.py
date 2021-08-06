@@ -142,7 +142,7 @@ def train_model(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = torch.randn((args.batch_size, args.latent_size))
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE.decoder, zgen, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -151,12 +151,12 @@ def train_model(args, datasets, prob_mask):
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
     
-    np.save(os.path.join(args.result_path, 'vae_gan_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'vae_gan_generated_patients.npy'), gen_xlist) 
+    np.save(os.path.join(args.result_path, '{}_generated_codes.npy'.format(args.model_type)), gen_zlist)
+    np.save(os.path.join(args.result_path, '{}_generated_patients.npy'.format(args.model_type)), gen_xlist) 
 
     if not args.no_mask and not args.use_prob_mask:
         gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
-        np.save(os.path.join(args.result_path, 'vae_gan_generated_masks.npy'), gen_mlist)
+        np.save(os.path.join(args.result_path, '{}_generated_masks.npy'.format(args.model_type)), gen_mlist)
 
 
 
@@ -241,7 +241,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             # loss
             recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
             mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, tgt_mask)
-        kld_loss = args.bbeta_kld * AE.compute_kl_diver_loss(mu, log_var)
+        kld_loss = args.beta_kld * AE.compute_kl_diver_loss(mu, log_var)
 
         # samples from N(0, I)
         zgen = torch.randn(log_var.size())

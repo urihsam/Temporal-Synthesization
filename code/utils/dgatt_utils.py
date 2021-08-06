@@ -34,6 +34,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Trans = Transformer(
                 num_encoder_layers=args.num_encoder_layers, #6 #1
                 num_decoder_layers=args.num_decoder_layers, #6 #1
+                max_length=args.max_length,
                 dim_feature=args.feature_size,
                 dim_model=args.latent_size, #512 #128
                 dim_time=int((kwargs["time_shift"]+kwargs["time_scale"])*1.5), # 
@@ -180,7 +181,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
     for i in range(args.gendata_size//args.batch_size):
         zgen = G(batch_size=args.batch_size*args.max_length)
         zgen = torch.reshape(zgen, (args.batch_size, args.max_length, -1))
-        Pgen, Mgen = model_inference(args, Trans, zgen, prob_mask, **kwargs)
+        Pgen, Mgen = model_inference(args, Trans.decoder, zgen, prob_mask, **kwargs)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -189,12 +190,12 @@ def train_model(args, datasets, prob_mask, **kwargs):
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
     
-    np.save(os.path.join(args.result_path, 'dgat_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'dgat_generated_patients.npy'), gen_xlist) 
+    np.save(os.path.join(args.result_path, '{}_generated_codes.npy'.format(args.model_type)), gen_zlist)
+    np.save(os.path.join(args.result_path, '{}_generated_patients.npy'.format(args.model_type)), gen_xlist) 
     
     if not args.no_mask and not args.use_prob_mask:
         gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
-        np.save(os.path.join(args.result_path, 'dgat_generated_masks.npy'), gen_mlist)
+        np.save(os.path.join(args.result_path, '{}_generated_masks.npy'.format(args.model_type)), gen_mlist)
 
 
 

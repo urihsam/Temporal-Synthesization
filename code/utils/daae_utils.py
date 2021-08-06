@@ -175,7 +175,7 @@ def train_model(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = G(batch_size=args.batch_size)
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE.decoder, zgen, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -184,12 +184,12 @@ def train_model(args, datasets, prob_mask):
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
     
-    np.save(os.path.join(args.result_path, 'daae_generated_codes.npy'), gen_zlist)
-    np.save(os.path.join(args.result_path, 'daae_generated_patients.npy'), gen_xlist) 
+    np.save(os.path.join(args.result_path, '{}_generated_codes.npy'.format(args.model_type)), gen_zlist)
+    np.save(os.path.join(args.result_path, '{}_generated_patients.npy'.format(args.model_type)), gen_xlist) 
     
     if not args.no_mask and not args.use_prob_mask:
         gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
-        np.save(os.path.join(args.result_path, 'daae_generated_masks.npy'), gen_mlist)
+        np.save(os.path.join(args.result_path, '{}_generated_masks.npy'.format(args.model_type)), gen_mlist)
 
 
 

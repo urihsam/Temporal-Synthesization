@@ -89,9 +89,9 @@ class EHR(Dataset):
             tempo = ex["tempo"] # [time_len, 9]
             time = np.floor(ex["time"])#.astype(int) # [time_en]
             # add struc into tempo
-            padding = np.array([[0.0]*7])
-            extra =  np.concatenate([start_age_year, padding], 1) # [1, 9]
-            extra_mask = np.array([[1,1]+[0]*7])
+            padding = np.array([[0.0]*1])
+            extra =  np.concatenate([start_age_year, start_age_year, start_age_year, start_age_year, padding], 1) # [1, 9]
+            extra_mask = np.array([[1]*8+[0]*1])
             # add extra info at start feature
             tempo = np.concatenate([extra, tempo], 0)
             mask = np.concatenate([extra_mask, mask], 0)

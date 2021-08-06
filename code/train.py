@@ -16,6 +16,7 @@ from utils.daae_utils import train_model as train_daae
 from utils.dgamt_utils import train_model as train_dgamt
 from utils.dgat_utils import train_model as train_dgat
 from utils.dgatt_utils import train_model as train_dgatt
+from utils.tgamt_utils import train_model as train_tgamt
 from utils.vae_gan_utils import train_model as train_vae_gan
 from utils.vae_utils import train_model as train_vae
 from utils.vae_utils import train_seq2seq_model as train_seq2seq_vae
@@ -96,6 +97,11 @@ def main(args):
         The discriminator for output data uses auxiliary classification with race and gender
         """
         train_adgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+
+    elif args.model_type == "tgamt": # dual generative adversarial time-embedding transformer
+        """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
+        """
+        train_tgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
     
     
 
@@ -115,7 +121,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='models')
     parser.add_argument('--result_path', type=str, default='results')
     parser.add_argument('--struct_info_file', type=str, default='struct_info.npy')
-    parser.add_argument('--max_length', type=int, default=40)
+    parser.add_argument('--max_length', type=int, default=50)
     parser.add_argument('--train_eval_freq', type=int, default=50)
     parser.add_argument('--valid_eval_freq', type=int, default=1)
     parser.add_argument('--critic_freq_base', type=int, default=5)
