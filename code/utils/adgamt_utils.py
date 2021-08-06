@@ -155,7 +155,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 print()
                 if valid_loss < min_valid_loss:
                     min_valid_loss = valid_loss
-                    path = "{}/dgat_vloss_{}".format(args.model_path, valid_loss)
+                    path = "{}/model_vloss_{}".format(args.model_path, valid_loss)
                     min_valid_path = path
 
                     models = {

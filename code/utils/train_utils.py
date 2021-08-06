@@ -15,7 +15,7 @@ def model_inference(args, decoder, zgen, prob_mask, **kwargs):
     start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
-    if args.model_type == "dgamt" or args.model_type == "adgamt" or args.model_type == "tgamt":
+    if args.model_type == "dgamt" or args.model_type == "adgamt" or args.model_type == "tgamt" or args.model_type == "edgamt":
         kwargs["start_time"] = start_time
         sampled_gender, sampled_race = sample_gender_race(zgen.size(0))
         kwargs["gender"] = sampled_gender

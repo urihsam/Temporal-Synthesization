@@ -12,6 +12,7 @@ from collections import OrderedDict, defaultdict
 from dataset import EHR
 from utils.aae_utils import train_model as train_aae
 from utils.adgamt_utils import train_model as train_adgamt
+from utils.edgamt_utils import train_model as train_edgamt
 from utils.daae_utils import train_model as train_daae
 from utils.dgamt_utils import train_model as train_dgamt
 from utils.dgat_utils import train_model as train_dgat
@@ -92,13 +93,20 @@ def main(args):
         train_dgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
     
-    elif args.model_type == "adgamt": # dual generative adversarial time-embedding transformer
+    elif args.model_type == "adgamt": # auxiliary dual generative adversarial time-embedding transformer
         """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
         The discriminator for output data uses auxiliary classification with race and gender
         """
         train_adgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
-    elif args.model_type == "tgamt": # dual generative adversarial time-embedding transformer
+    elif args.model_type == "edgamt": # extra dual generative adversarial time-embedding transformer
+        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
+        The discriminator for output data uses auxiliary classification with race and gender
+        an extra discriminator is added for masks
+        """
+        train_edgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+
+    elif args.model_type == "tgamt": # triplet generative adversarial time-embedding transforls
         """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
         """
         train_tgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
