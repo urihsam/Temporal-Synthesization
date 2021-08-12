@@ -10,17 +10,22 @@ from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 
 from dataset import EHR
-from utils.aae_utils import train_model as train_aae
-from utils.adgamt_utils import train_model as train_adgamt
-from utils.edgamt_utils import train_model as train_edgamt
-from utils.daae_utils import train_model as train_daae
-from utils.dgamt_utils import train_model as train_dgamt
-from utils.dgat_utils import train_model as train_dgat
-from utils.dgatt_utils import train_model as train_dgatt
-from utils.tgamt_utils import train_model as train_tgamt
-from utils.vae_gan_utils import train_model as train_vae_gan
-from utils.vae_utils import train_model as train_vae
-from utils.vae_utils import train_seq2seq_model as train_seq2seq_vae
+#
+from utils.base.aae_utils import train_model as train_aae
+from utils.base.daae_utils import train_model as train_daae
+from utils.base.gan_utils import train_model as train_gan
+from utils.base.vae_gan_utils import train_model as train_vae_gan
+from utils.base.vae_utils import train_model as train_vae
+from utils.base.vae_utils import train_seq2seq_model as train_seq2seq_vae
+#
+from utils.dgat.base.dgat_utils import train_model as train_dgat
+from utils.dgat.base.dgatt_utils import train_model as train_dgatt
+from utils.dgat.dgamt_utils import train_model as train_dgamt
+from utils.dgat.edgamt_utils import train_model as train_edgamt
+#
+from utils.tgat.etgamt_utils import train_model as train_etgamt
+from utils.tgat.tgamt_utils import train_model as train_tgamt
+
 
 
 
@@ -63,6 +68,10 @@ def main(args):
         """ Only one GAN in vae_gan, which is for output data x, and z is constrained by KL divergence
         """
         train_vae_gan(args, datasets, prob_mask)
+    elif args.model_type == "gan":
+        """ Only one GAN
+        """
+        train_gan(args, datasets, prob_mask)
     elif args.model_type == "aae":
         """ Only one GAN in aae, which is for hidden state z, and x is only constrained by reconstruction loss
         """
@@ -92,12 +101,6 @@ def main(args):
         """
         train_dgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
-    
-    elif args.model_type == "adgamt": # auxiliary dual generative adversarial time-embedding transformer
-        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
-        The discriminator for output data uses auxiliary classification with race and gender
-        """
-        train_adgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
     elif args.model_type == "edgamt": # extra dual generative adversarial time-embedding transformer
         """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
@@ -110,6 +113,11 @@ def main(args):
         """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
         """
         train_tgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+
+    elif args.model_type == "etgamt": # triplet generative adversarial time-embedding transforls
+        """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
+        """
+        train_etgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
     
     
 
@@ -142,10 +150,26 @@ if __name__ == '__main__':
     
     parser.add_argument('-ep', '--epochs', type=int, default=500)
     parser.add_argument('-bs', '--batch_size', type=int, default=32)
-    parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
-    parser.add_argument('-lr_decay', '--lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--enc_learning_rate', type=float, default=0.001)
+    parser.add_argument('--dec_learning_rate', type=float, default=0.001)
+    parser.add_argument('--dx_learning_rate', type=float, default=0.001)
+    parser.add_argument('--dz_learning_rate', type=float, default=0.001)
+    parser.add_argument('--dm_learning_rate', type=float, default=0.001)
+    parser.add_argument('--di_learning_rate', type=float, default=0.001)
+    parser.add_argument('--dmi_learning_rate', type=float, default=0.001)
+    parser.add_argument('--g_learning_rate', type=float, default=0.001)
+    parser.add_argument('--enc_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--dec_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--dx_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--dz_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--dm_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--di_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--dmi_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--g_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('-beta_r', '--beta_recon', type=float, default=10.0)
     parser.add_argument('-beta_m', '--beta_mask', type=float, default=1.0)
+    parser.add_argument('-beta_ra', '--beta_race', type=float, default=1.0)
+    parser.add_argument('-beta_gd', '--beta_gender', type=float, default=1.0)
     parser.add_argument('-beta_k', '--beta_kld', type=float, default=1.0)
     parser.add_argument('-gs','--gendata_size', type=int, default=100000)
     parser.add_argument('-gd', '--gpu_devidx', type=int, default=0)
@@ -153,15 +177,21 @@ if __name__ == '__main__':
     parser.add_argument('--num_encoder_layers', type=int, default=6)
     parser.add_argument('--num_decoder_layers', type=int, default=6)
     parser.add_argument('--num_heads', type=int, default=6)
+    parser.add_argument('--dx_num_heads', type=int, default=6)
     parser.add_argument('-fts', '--feature_size', type=int, default=9)
     parser.add_argument('-rnn', '--rnn_type', type=str, default='gru')
     parser.add_argument('-hs', '--hidden_size', type=int, default=128)
     parser.add_argument('-nl', '--num_layers', type=int, default=1)
+    parser.add_argument('--dx_num_layers', type=int, default=1)
+    parser.add_argument('--dx_hidden_size', type=int, default=128)
+    parser.add_argument('--num_dx_layers', type=int, default=1)
     parser.add_argument('-bi', '--bidirectional', action='store_true')
     parser.add_argument('-ns', '--noise_size', type=int, default=128)
     parser.add_argument('-ls', '--latent_size', type=int, default=128)
+    parser.add_argument('--dx_latent_size', type=int, default=128)
     parser.add_argument('-fis', '--filter_size', type=int, default=16)
     parser.add_argument('-ws', '--window_sizes', nargs='+', type=int, default=[2, 3])
+    parser.add_argument('--dx_dropout', type=float, default=0.5)
     parser.add_argument('-ed', '--encoder_dropout', type=float, default=0.5)
     parser.add_argument('-dd', '--decoder_dropout', type=float, default=0.5)
     parser.add_argument('-fd', '--feature_dropout', type=float, default=0.5)

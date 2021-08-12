@@ -76,27 +76,27 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Dz = Dz.cuda()
         
 
-        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.learning_rate)
-        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.learning_rate)
-        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.learning_rate)
-        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.learning_rate)
-        opt_gen = torch.optim.Adam(G.parameters(), lr=args.learning_rate)
+        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.dec_learning_rate)
+        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.dx_learning_rate)
+        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.dz_learning_rate)
+        opt_gen = torch.optim.Adam(G.parameters(), lr=args.g_learning_rate)
         #
         if args.dp_sgd == True: # opt_dix and opt_diz access origin data too?
-            opt_dec = DPSGD(params=Trans.decoder.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_dec = DPSGD(params=Trans.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
-            opt_gen = DPSGD(params=G.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size, 
+            opt_gen = DPSGD(params=G.parameters(), lr=args.g_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size, 
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
 
             print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
 
 
-        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
-        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
-        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.lr_decay_rate)
-        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.lr_decay_rate)
-        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.lr_decay_rate)
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
+        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.dx_lr_decay_rate)
+        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.dz_lr_decay_rate)
+        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.g_lr_decay_rate)
 
         
         tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -293,19 +293,19 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
         src_ava = batch['src_ava']; tgt_ava = batch['tgt_ava']
 
-        if args.no_mask:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
+        if args.no_mask: # z, Pinput, Poutput, Toutput, Moutput
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
                                                 None, None, src_ava, tgt_ava)
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
                                                 src_mask, tgt_mask, src_ava, tgt_ava)
             output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
                                                 src_mask, tgt_mask, src_ava, tgt_ava)
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
@@ -319,15 +319,15 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         sampled_gender, sampled_race = sample_gender_race(z.size(0))
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
-        if args.no_mask:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+        if args.no_mask: # Pgen, Tgen, Mgen
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
         else:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
 
         #import pdb; pdb.set_trace()
-        Dinput, Doutput, Dgen = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
+        Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
         # reshape z, zgen
         #z = torch.reshape(z, (-1, z.size(-1)))
         #zgen = torch.reshape(zgen, (-1, zgen.size(-1)))
@@ -341,17 +341,17 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
                 opt_dix.zero_grad()
-                Dinput, Doutput = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean()
+                Dinput, Doutput = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Doutput.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Poutput.size(1), :], Poutput, Moutput).backward(retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(retain_graph=True)
                 opt_dix.step()
 
                 opt_dix.zero_grad()
-                Dinput, Dgen = Dx(Pinput).mean(), Dx(Pgen, Mgen).mean()
+                Dinput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Pgen, Mgen).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Dgen.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Pgen.size(1), :], Pgen, Mgen).backward(retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, tgt_mask, Mgen).backward(retain_graph=True)
                 opt_dix.step()
                     
                 # Step 2: Update the Critic_z

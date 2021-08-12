@@ -72,28 +72,28 @@ def train_model(args, datasets, prob_mask):
         
         
 
-        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.learning_rate)
-        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.learning_rate)
-        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.learning_rate)
-        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.learning_rate)
-        opt_gen = torch.optim.Adam(G.parameters(), lr=args.learning_rate)
+        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.dec_learning_rate)
+        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.dx_learning_rate)
+        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.dz_learning_rate)
+        opt_gen = torch.optim.Adam(G.parameters(), lr=args.g_learning_rate)
         #
         if args.dp_sgd == True: # ??? why dec, gen?
             
-            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
-            opt_gen = DPSGD(params=G.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_gen = DPSGD(params=G.parameters(), lr=args.g_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
 
             print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
 
 
-        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
-        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
-        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.lr_decay_rate)
-        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.lr_decay_rate)
-        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.lr_decay_rate)
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
+        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.dx_lr_decay_rate)
+        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.dz_lr_decay_rate)
+        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.g_lr_decay_rate)
 
         tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
         models = {
@@ -304,7 +304,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         else:
             Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen)
 
-        Dinput, Doutput, Dgen = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
+        Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
         Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
 
         xCritic_loss = - Dinput + 0.5 * (Doutput + Dgen)
@@ -314,17 +314,17 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
                 opt_dix.zero_grad()
-                Dinput, Doutput = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean()
+                Dinput, Doutput = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Doutput.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Poutput.size(1), :], Poutput, Moutput).backward(retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(retain_graph=True)
                 opt_dix.step()
 
                 opt_dix.zero_grad()
-                Dinput, Dgen = Dx(Pinput).mean(), Dx(Pgen, Mgen).mean()
+                Dinput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Pgen, Mgen).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Dgen.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Pgen.size(1), :], Pgen, Mgen).backward(retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, tgt_mask, Mgen).backward(retain_graph=True)
                 opt_dix.step()
                     
                 # Step 2: Update the Critic_z

@@ -99,6 +99,7 @@ class TransformerEncoder(torch.nn.Module):
         num_layers: int = 6,
         dim_feature: int = 9,
         dim_model: int = 512, 
+        dim_time: int = 100,
         num_heads: int = 8, 
         dim_feedforward: int = 2048, 
         dropout: float = 0.1, 
@@ -279,7 +280,7 @@ class TransformerDecoder(torch.nn.Module):
             mask =  torch.nn.functional.sigmoid(self.linear_m(mask))
         else:
             mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
-        return output, mask
+        return output, time, mask
 
 
     def inference(self, start_feature: Tensor, z: Tensor, start_mask: Tensor = None, prob_mask: Tensor = None, **kwargs):
@@ -307,6 +308,7 @@ class TransformerDecoder(torch.nn.Module):
 
         generations = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float()
         gen_masks = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float()
+        gen_times = self.tensor(batch_size, self.max_length, 1).fill_(0.0).float()
         
         t=0
         time = start_time.cuda()
@@ -321,10 +323,18 @@ class TransformerDecoder(torch.nn.Module):
             if t == 0:
                 # input for time step 0
                 input_sequence = start_feature.float().cuda() # [batch, feature_size]
+                # save next input
+                generations = self._save_sample(generations, input_sequence, sequence_running, 0)
+                # save time
+                gen_times = self._save_sample(gen_times, time, sequence_running, 0)
                 if start_mask == None:
                     input_mask = None
                 else:
                     input_mask = start_mask.float().cuda() # [batch, feature_size]
+                    # save next input
+                    gen_masks = self._save_sample(gen_masks, input_mask, sequence_running, 0)
+
+                
                         
             input_ = input_sequence.unsqueeze(dim=1)
             if not self.attentioned_mask and input_mask is not None:
@@ -362,6 +372,8 @@ class TransformerDecoder(torch.nn.Module):
             input_sequence = input_sequence.squeeze(dim=1)
             # save next input
             generations = self._save_sample(generations, input_sequence, sequence_running, t+1)
+            # save time
+            gen_times = self._save_sample(gen_times, time, sequence_running, t+1)
             
             
             #import pdb; pdb.set_trace()
@@ -417,11 +429,11 @@ class TransformerDecoder(torch.nn.Module):
         output = generations
         
         if start_mask == None or self.use_prob_mask:
-            return output, None
+            return output, gen_times, None
         
         mask = gen_masks
 
-        return output, mask
+        return output, gen_times, mask
         
 
     def _save_sample(self, save_to, sample, running_seqs, t):
@@ -498,13 +510,13 @@ class Transformer(torch.nn.Module):
         if tgt_ava is not None: tgt_ava = tgt_ava.float()
         #import pdb; pdb.set_trace()
         memory = self.encoder(src, src_time, gender, race, src_mask, src_ava)
-        output, mask = self.decoder(tgt, memory, tgt_time, gender, race, tgt_mask, tgt_ava)
+        output, out_time, out_mask = self.decoder(tgt, memory, tgt_time, gender, race, tgt_mask, tgt_ava)
         # build a target prob tensor
         if tgt_mask == None:
             p_input = tgt
         else:
             p_input = torch.mul(tgt, tgt_mask)
-        return memory, p_input, output, mask
+        return memory, p_input, output, out_time, out_mask
 
 
     def compute_mask_loss(self, output_mask, mask, type="xent"):
@@ -539,3 +551,187 @@ class Transformer(torch.nn.Module):
             raise "Wrong loss type"
  
         return (loss_1 + loss_2)/2
+
+
+
+class Trans_Discriminator(torch.nn.Module):
+
+    def __init__(
+        self, 
+        num_layers: int = 6,
+        dim_feature: int = 9,
+        dim_model: int = 512, 
+        dim_time: int = 100,
+        num_heads: int = 8, 
+        max_length: int = 50,
+        dim_feedforward: int = 2048, 
+        dropout: float = 0.1,
+        use_spectral_norm=False
+    ):
+        super().__init__()
+        self.trans = TransformerEncoder(
+            attentioned_mask=False,
+            num_layers=num_layers,
+            dim_feature=dim_feature,
+            dim_model=dim_model,
+            dim_time=dim_time,
+            num_heads=num_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+        )
+
+
+        layer_ = torch.nn.Linear(max_length*dim_model, 1)
+        if use_spectral_norm:
+            layer_ = spectral_norm(layer_)
+        self.feature2binary = layer_
+
+    def forward(self, tempo: Tensor, time: Tensor, mask: Tensor = None):
+        tempo = tempo.cuda().float(); time=time.cuda().int() 
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if mask is not None: mask = mask.cuda().float()
+
+        if len(time.shape) == 3: time = time.squeeze(dim=2)
+
+        feature_vecs = self.trans(tempo, time, mask)
+        feature_vecs = torch.reshape(feature_vecs, (feature_vecs.shape[0], -1))
+        scores = self.feature2binary(feature_vecs).squeeze(1)
+        return scores
+
+    def cal_gradient_penalty(self, real_data, fake_data, real_time, fake_time, real_mask=None, fake_mask=None, gp_lambda=10):
+        real_data = real_data.cuda().float(); fake_data = fake_data.cuda().float()
+        real_time=real_time.cuda().int(); fake_time=fake_time.cuda().int()
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if real_mask is not None: real_mask = real_mask.cuda().float()
+        if fake_mask is not None: fake_mask = fake_mask.cuda().float()
+        if len(real_time.shape) == 3: real_time = real_time.squeeze(dim=2)
+        if len(fake_time.shape) == 3: fake_time = fake_time.squeeze(dim=2)
+
+        batch_size = real_data.size(0)
+        epsilon = torch.rand(batch_size, 1, 1)
+        epsilon = epsilon.expand(real_data.size())
+
+        epsilon_t = torch.rand(batch_size, 1)
+        epsilon_t = epsilon_t.expand(real_time.size())
+
+        if torch.cuda.is_available():
+            epsilon = epsilon.cuda()
+            epsilon_t = epsilon_t.cuda()
+
+        if real_mask is not None:
+            real_data = torch.mul(real_data, real_mask)
+        if fake_mask is not None:
+            fake_data = torch.mul(fake_data, fake_mask)
+
+        interpolates = epsilon * real_data + (1 - epsilon) * fake_data
+        interpolates = torch.autograd.Variable(interpolates, requires_grad=True)
+        #
+        inter_time = epsilon_t * real_time + (1 - epsilon_t) * fake_time
+        D_interpolates, _, _ = self.forward(interpolates, inter_time, gender, race)
+
+        gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                create_graph=True, retain_graph=True, only_inputs=True)[0]
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
+        return gradient_penalty
+
+
+class Trans_Auxiliary_Discriminator(torch.nn.Module):
+    def __init__(
+        self, 
+        num_layers: int = 6,
+        dim_feature: int = 9,
+        dim_model: int = 512, 
+        dim_time: int = 100,
+        num_heads: int = 8, 
+        max_length: int = 50,
+        dim_feedforward: int = 2048, 
+        dropout: float = 0.1,
+        use_spectral_norm=False
+    ):
+        super().__init__()
+        self.trans = TransformerEncoder(
+            attentioned_mask=False,
+            num_layers=num_layers,
+            dim_feature=dim_feature,
+            dim_model=dim_model,
+            dim_time=dim_time,
+            num_heads=num_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+        )
+        # for output
+        layer_out = torch.nn.Linear(max_length*dim_model, 1)
+        if use_spectral_norm:
+            layer_out = spectral_norm(layer_out)
+        self.feature2binary = layer_out
+
+        # for gender
+        layer_gender = torch.nn.Linear(max_length*dim_model, 2)
+        if use_spectral_norm:
+            layer_gender = spectral_norm(layer_gender)
+        self.feature2gender = layer_gender
+
+        # for race
+        layer_race = torch.nn.Linear(max_length*dim_model, 3)
+        if use_spectral_norm:
+            layer_race = spectral_norm(layer_race)
+        self.feature2race = layer_race
+
+
+    def forward(self, tempo: Tensor, time: Tensor, gender: Tensor, race: Tensor, mask: Tensor = None) -> Tensor:
+        tempo = tempo.cuda().float(); time=time.cuda().int() 
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if mask is not None: mask = mask.cuda().float()
+        if len(time.shape) == 3: time = time.squeeze(dim=2)
+        feature_vecs = self.trans(tempo, time, gender, race, mask)
+        feature_vecs = torch.reshape(feature_vecs, (feature_vecs.shape[0], -1))
+        real_scores = self.feature2binary(feature_vecs).squeeze(1)
+        gender_probs = torch.nn.functional.softmax(self.feature2gender(feature_vecs), dim=1)
+        race_probs = torch.nn.functional.softmax(self.feature2race(feature_vecs), dim=1)
+        return real_scores, gender_probs, race_probs
+
+    def cal_gradient_penalty(self, real_data, fake_data, real_time, fake_time, gender, race, real_mask=None, fake_mask=None, gp_lambda=10):
+        real_data = real_data.cuda().float(); fake_data = fake_data.cuda().float()
+        real_time=real_time.cuda().int(); fake_time=fake_time.cuda().int()
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if real_mask is not None: real_mask = real_mask.cuda().float()
+        if fake_mask is not None: fake_mask = fake_mask.cuda().float()
+        if len(real_time.shape) == 3: real_time = real_time.squeeze(dim=2)
+        if len(fake_time.shape) == 3: fake_time = fake_time.squeeze(dim=2)
+        
+        batch_size = real_data.size(0)
+        epsilon = torch.rand(batch_size, 1, 1)
+        epsilon = epsilon.expand(real_data.size())
+
+        epsilon_t = torch.rand(batch_size, 1)
+        epsilon_t = epsilon_t.expand(real_time.size())
+
+        if torch.cuda.is_available():
+            epsilon = epsilon.cuda()
+            epsilon_t = epsilon_t.cuda()
+
+        if real_mask is not None:
+            real_data = torch.mul(real_data, real_mask)
+        if fake_mask is not None:
+            fake_data = torch.mul(fake_data, fake_mask)
+
+        interpolates = epsilon * real_data + (1 - epsilon) * fake_data
+        interpolates = torch.autograd.Variable(interpolates, requires_grad=True)
+        #
+        inter_time = epsilon_t * real_time + (1 - epsilon_t) * fake_time
+        D_interpolates, _, _ = self.forward(interpolates, inter_time, gender, race)
+
+        gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                create_graph=True, retain_graph=True, only_inputs=True)[0]
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
+        return gradient_penalty
+
+    
+    def cal_xentropy_loss(self, preds, target):
+        entropy = torch.mul(target, torch.log(preds + 1e-12)) + torch.mul((1-target), torch.log((1-preds + 1e-12)))
+        loss = torch.mean(torch.sum(-1.0*entropy, dim=(1)))
+
+        return loss
+

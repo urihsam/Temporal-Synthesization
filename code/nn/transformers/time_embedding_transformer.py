@@ -76,6 +76,7 @@ class TransformerEncoder(torch.nn.Module):
         num_layers: int = 6,
         dim_feature: int = 9,
         dim_model: int = 512, 
+        dim_time: int = 100,
         num_heads: int = 8, 
         dim_feedforward: int = 2048, 
         dropout: float = 0.1, 
@@ -185,7 +186,7 @@ class TransformerDecoder(torch.nn.Module):
         if tgt_mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
             return output, None
         mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
-        return output, mask
+        return output, time, mask
 
 
     def inference(self, start_feature: Tensor, z: Tensor, start_mask: Tensor = None, prob_mask: Tensor = None, **kwargs):
@@ -211,6 +212,7 @@ class TransformerDecoder(torch.nn.Module):
 
         generations = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float()
         gen_masks = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float()
+        gen_times = self.tensor(batch_size, self.max_length, 1).fill_(0.0).float()
         
         t=0
         time = start_time.cuda()
@@ -225,10 +227,16 @@ class TransformerDecoder(torch.nn.Module):
             if t == 0:
                 # input for time step 0
                 input_sequence = start_feature.float().cuda() # [batch, feature_size]
+                # save next input
+                generations = self._save_sample(generations, input_sequence, sequence_running, 0)
+                # save time
+                gen_times = self._save_sample(gen_times, time, sequence_running, 0)
                 if start_mask == None:
                     input_mask = None
                 else:
                     input_mask = start_mask.float().cuda() # [batch, feature_size]
+                    # save next input
+                    gen_masks = self._save_sample(gen_masks, input_mask, sequence_running, 0)
                         
             input_ = input_sequence.unsqueeze(dim=1)
             if input_mask is not None:
@@ -257,7 +265,8 @@ class TransformerDecoder(torch.nn.Module):
             input_sequence = input_sequence.squeeze(dim=1)
             # save next input
             generations = self._save_sample(generations, input_sequence, sequence_running, t+1)
-            
+            # save time
+            gen_times = self._save_sample(gen_times, time, sequence_running, t+1)
             
             #import pdb; pdb.set_trace()
             #
@@ -307,11 +316,11 @@ class TransformerDecoder(torch.nn.Module):
         output = generations
         
         if start_mask == None or self.use_prob_mask:
-            return output, None
+            return output, gen_times, None
         
         mask = gen_masks
 
-        return output, mask
+        return output, gen_times, mask
         
 
     def _save_sample(self, save_to, sample, running_seqs, t):
@@ -371,13 +380,13 @@ class Transformer(torch.nn.Module):
         tgt = tgt.float(); tgt_time=tgt_time.int(); tgt_mask = tgt_mask.float()
         #import pdb; pdb.set_trace()
         memory = self.encoder(src, src_time, src_mask)
-        output, mask = self.decoder(tgt, memory, tgt_time, tgt_mask)
+        output, out_time, out_mask = self.decoder(tgt, memory, tgt_time, tgt_mask)
         # build a target prob tensor
         if tgt_mask == None:
             p_input = tgt
         else:
             p_input = torch.mul(tgt, tgt_mask)
-        return memory, p_input, output, mask
+        return memory, p_input, output, out_time, out_mask
 
 
     def compute_mask_loss(self, output_mask, mask, type="xent"):

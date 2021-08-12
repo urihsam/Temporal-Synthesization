@@ -9,11 +9,22 @@ class Encoder(nn.Module):
 
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-        
+        if rnn is None:
+            if rnn_type == 'rnn':
+                rnn = nn.RNN
+            elif rnn_type == 'gru':
+                rnn = nn.GRU
+            elif rnn_type == 'lstm':
+                rnn = nn.LSTM
+            else:
+                raise ValueError()
         self.rnn_type = rnn_type
         self.feature_size = feature_size
         self.hidden_size = hidden_size
-        self.hidden_factor = hidden_factor
+        if hidden_factor is None:
+            self.hidden_factor = (2 if bidirectional else 1) * num_layers
+        else:
+            self.hidden_factor = hidden_factor
         self.latent_size = latent_size
         self.num_layers = num_layers
         self.bidirectional = bidirectional
@@ -53,12 +64,21 @@ class Decoder(nn.Module):
 
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-
         self.rnn_type = rnn_type
+        if rnn is None:
+            if rnn_type == 'rnn':
+                rnn = nn.RNN
+            elif rnn_type == 'gru':
+                rnn = nn.GRU
+            elif rnn_type == 'lstm':
+                rnn = nn.LSTM
+            else:
+                raise ValueError()
         self.feature_size = feature_size
         self.hidden_size = hidden_size
         self.latent_size = latent_size
-
+        if hidden_factor is None:
+            hidden_factor = (2 if bidirectional else 1) * num_layers
         self.num_layers = num_layers
         self.bidirectional = bidirectional
         self.max_length = max_length

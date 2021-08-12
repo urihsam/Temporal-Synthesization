@@ -206,10 +206,14 @@ class TransformerDecoder(torch.nn.Module):
             if t == 0:
                 # input for time step 0
                 input_sequence = start_feature.float().cuda() # [batch, feature_size]
+                # save next input
+                generations = self._save_sample(generations, input_sequence, sequence_running, 0)
                 if start_mask == None:
                     input_mask = None
                 else:
                     input_mask = start_mask.float().cuda() # [batch, feature_size]
+                    # save next input
+                    gen_masks = self._save_sample(gen_masks, input_mask, sequence_running, 0)
                         
             input_ = input_sequence.unsqueeze(dim=1)
             if input_mask is not None:

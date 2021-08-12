@@ -13,19 +13,29 @@ from collections import OrderedDict, defaultdict
 def model_inference(args, decoder, zgen, prob_mask, **kwargs):
     # make up start feature
     start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
+    model_list = ["dgatt", "dgamt", "edgamt", "tgamt", "etgamt"]
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
-    if args.model_type == "dgamt" or args.model_type == "adgamt" or args.model_type == "tgamt" or args.model_type == "edgamt":
+    elif args.model_type in model_list:
         kwargs["start_time"] = start_time
         sampled_gender, sampled_race = sample_gender_race(zgen.size(0))
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
-    if args.no_mask:
-        Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
-    elif args.use_prob_mask:
-        Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+
+    if args.model_type in model_list:
+        if args.no_mask:
+            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+        elif args.use_prob_mask:
+            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+        else:
+            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
     else:
-        Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+        if args.no_mask:
+            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+        elif args.use_prob_mask:
+            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+        else:
+            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
 
     return Pgen, Mgen
 
