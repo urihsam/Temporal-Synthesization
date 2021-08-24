@@ -42,7 +42,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 dim_feedforward=args.hidden_size, #2048 #128
                 encoder_dropout=args.encoder_dropout,
                 decoder_dropout=args.decoder_dropout,
-                attentioned_mask = args.use_attentioned_mask,
                 use_prob_mask=args.use_prob_mask
                 )
 

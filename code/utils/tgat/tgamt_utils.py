@@ -28,6 +28,8 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Dx = models["Dx"]
             G = models["G"]
             Dz = models["Dz"]
+            Imi = models["Imi"]
+            Di = models["Di"]
             
         else:
             dim_time = int((kwargs["time_shift"]+kwargs["time_scale"])*1.5)
@@ -43,7 +45,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 dim_feedforward=args.hidden_size, #2048 #128
                 encoder_dropout=args.encoder_dropout,
                 decoder_dropout=args.decoder_dropout,
-                attentioned_mask = args.use_attentioned_mask,
                 use_prob_mask=args.use_prob_mask
                 )
 
@@ -74,7 +75,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 time_embedding=None,
                 gender_embedding=None,
                 race_embedding=None,
-                attentioned_mask=args.use_attentioned_mask,
                 num_layers=args.num_decoder_layers,
                 max_length=args.max_length,
                 dim_feature=args.feature_size,
@@ -104,31 +104,31 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Di = Di.cuda()
         
 
-        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.learning_rate)
-        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.learning_rate)
-        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.learning_rate)
-        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.learning_rate)
-        opt_gen = torch.optim.Adam(G.parameters(), lr=args.learning_rate)
-        opt_imi = torch.optim.Adam(Imi.parameters(), lr=args.learning_rate)
-        opt_dii = torch.optim.Adam(Di.parameters(), lr=args.learning_rate)
+        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.dec_learning_rate)
+        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.dx_learning_rate)
+        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.dz_learning_rate)
+        opt_gen = torch.optim.Adam(G.parameters(), lr=args.g_learning_rate)
+        opt_imi = torch.optim.Adam(Imi.parameters(), lr=args.imi_learning_rate)
+        opt_dii = torch.optim.Adam(Di.parameters(), lr=args.di_learning_rate)
         #
         if args.dp_sgd == True: # Different from others
-            opt_diz = DPSGD(params=Dz.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_diz = DPSGD(params=Dz.parameters(), lr=args.dz_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
-            opt_dii = DPSGD(params=Di.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_dii = DPSGD(params=Di.parameters(), lr=args.di_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
 
             print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # 
 
 
-        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
-        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
-        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.lr_decay_rate)
-        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.lr_decay_rate)
-        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.lr_decay_rate)
-        lr_imi = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_imi, gamma=args.lr_decay_rate)
-        lr_dii = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dii, gamma=args.lr_decay_rate)
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
+        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.dx_lr_decay_rate)
+        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.dz_lr_decay_rate)
+        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.g_lr_decay_rate)
+        lr_imi = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_imi, gamma=args.imi_lr_decay_rate)
+        lr_dii = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dii, gamma=args.di_lr_decay_rate)
 
         
         tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -354,18 +354,18 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         src_ava = batch['src_ava']; tgt_ava = batch['tgt_ava']
 
         if args.no_mask:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
                                                 None, None, src_ava, tgt_ava)
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
                                                 src_mask, tgt_mask, src_ava, tgt_ava)
             output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
                                                 src_mask, tgt_mask, src_ava, tgt_ava)
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
@@ -380,14 +380,14 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
         if args.no_mask:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
-            Pimi, Mimi = Imi.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
+            Pimi, _, Mimi = Imi.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
-            Pimi, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
+            Pimi, _, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
-            Pimi, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
+            Pimi, _, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
 
         #import pdb; pdb.set_trace()
         Dinput, Doutput, Dgen = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
@@ -404,74 +404,85 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         if split == 'train':
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
+                params = tuple(Dx.parameters())
                 opt_dix.zero_grad()
-                Dinput, Doutput = Dx(Pinput).mean(), Dx(Poutput, Moutput).mean()
-                Dinput.backward(mone, retain_graph=True)
-                Doutput.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Poutput.size(1), :], Poutput, Moutput).backward(retain_graph=True)
+                Dinput, Doutput = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean()
+                Dinput.backward(mone, inputs=params, retain_graph=True)
+                Doutput.backward(one, inputs=params, retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(inputs=params, retain_graph=True)
                 opt_dix.step()
 
                 opt_dix.zero_grad()
-                Dinput, Dgen = Dx(Pinput).mean(), Dx(Pgen, Mgen).mean()
-                Dinput.backward(mone, retain_graph=True)
-                Dgen.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Pgen.size(1), :], Pgen, Mgen).backward(retain_graph=True)
+                Dinput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Pgen, Mgen).mean()
+                Dinput.backward(mone, inputs=params, retain_graph=True)
+                Dgen.backward(one, inputs=params, retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, tgt_mask, Mgen).backward(inputs=params, retain_graph=True)
                 opt_dix.step()
                     
                 # Step 2: Update the Critic_z
+                params = tuple(Dz.parameters())
                 opt_diz.zero_grad()
                 Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
-                Dreal.backward(mone, retain_graph=True)
-                Dfake.backward(one, retain_graph=True)
+                Dreal.backward(mone, inputs=params, retain_graph=True)
+                Dfake.backward(one, inputs=params, retain_graph=True)
                 Dz.cal_gradient_penalty(z, zgen).backward()
                 opt_diz.step()
-            elif iteration % args.critic_freq_base < args.critic_freq_hit*2:
-                # Step 5: Update the Critic_i
-                opt_dii.zero_grad()
-                Diinput, Dioutput = Di(Pinput).mean(), Di(Poutput, Moutput).mean()
-                Diinput.backward(mone, retain_graph=True)
-                Dioutput.backward(one, retain_graph=True)
-                Di.cal_gradient_penalty(Pinput[:, :Poutput.size(1), :], Poutput, Moutput).backward(retain_graph=True)
-                opt_dii.step()
-
-                opt_dii.zero_grad()
-                Diinput, Diimi = Di(Pinput).mean(), Di(Pimi, Mimi).mean()
-                Diinput.backward(mone, retain_graph=True)
-                Diimi.backward(one, retain_graph=True)
-                Di.cal_gradient_penalty(Pinput[:, :Pimi.size(1), :], Pimi, Mimi).backward(retain_graph=True)
-                opt_dii.step()
+                
 
                 
 
             # Step 3, 4: Update the Decoder and the Encoder
+            params = tuple(Trans.parameters())
             opt_dec.zero_grad()
             Doutput, Dgen = Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
-            Doutput.backward(mone, retain_graph=True)
-            Dgen.backward(mone, retain_graph=True)
+            Doutput.backward(mone, inputs=params, retain_graph=True)
+            Dgen.backward(mone, inputs=params, retain_graph=True)
             
             opt_enc.zero_grad()
             Dreal = Dz(z).mean()
-            Dreal.backward(one, retain_graph=True)
+            Dreal.backward(one, inputs=params, retain_graph=True)
 
-            recon_loss.backward(retain_graph=True)
+            recon_loss.backward(inputs=params, retain_graph=True)
             if not args.no_mask and not args.use_prob_mask:
-                mask_loss.backward(retain_graph=True)
+                mask_loss.backward(inputs=params, retain_graph=True)
             
             opt_dec.step()
             opt_enc.step()
 
-
-            # Step 6: Update the Imitator
-            opt_imi.zero_grad()
-            Diimi = Di(Pimi, Mimi).mean()
-            Diimi.backward(mone, retain_graph=True)
-            opt_imi.step()
-
-            # Step 7: Update the Generator
+            # Step 5: Update the Generator
+            params = tuple(G.parameters())
             opt_gen.zero_grad()
             Dfake = Dz(zgen).mean()
-            Dfake.backward(mone, retain_graph=True)
+            Dfake.backward(mone, inputs=params, retain_graph=True)
             opt_gen.step()
+            
+            if iteration % args.critic_freq_base < args.critic_freq_hit:
+                # Step 6: Update the Critic_i
+                params = tuple(Di.parameters())
+                opt_dii.zero_grad()
+                Diinput, Dioutput = Di(tgt_tempo).mean(), Di(Poutput).mean()
+                Diinput.backward(mone, inputs=params, retain_graph=True)
+                Dioutput.backward(one, inputs=params, retain_graph=True)
+                Di.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(inputs=params, retain_graph=True)
+                opt_dii.step()
+
+                opt_dii.zero_grad()
+                Diinput, Diimi = Di(tgt_tempo).mean(), Di(Pimi).mean()
+                Diinput.backward(mone, inputs=params, retain_graph=True)
+                Diimi.backward(one, inputs=params, retain_graph=True)
+                Di.cal_gradient_penalty(tgt_tempo[:, :Pimi.size(1), :], Pimi, tgt_mask, Mimi).backward(inputs=params, retain_graph=True)
+                opt_dii.step()
+
+            # Step 7: Update the Imitator
+            params = tuple(Imi.parameters())
+            opt_imi.zero_grad()
+            Diimi = Di(Pimi, Mimi).mean()
+            #Dioutput = Di(Poutput, Moutput).mean()
+            Diimi.backward(mone, inputs=params, retain_graph=True)
+            #Dioutput.backward(mone, retain_graph=True)
+            opt_imi.step()
+
+            
         
         #import pdb; pdb.set_trace()
         #

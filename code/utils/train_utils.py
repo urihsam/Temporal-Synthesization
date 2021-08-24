@@ -13,7 +13,7 @@ from collections import OrderedDict, defaultdict
 def model_inference(args, decoder, zgen, prob_mask, **kwargs):
     # make up start feature
     start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
-    model_list = ["dgatt", "dgamt", "edgamt", "tgamt", "etgamt"]
+    model_list = ["dgatt", "dgamt", "edgamt", "tgamt", "etgamt", "igamt", "igamt_v2"]
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
     elif args.model_type in model_list:
@@ -24,18 +24,18 @@ def model_inference(args, decoder, zgen, prob_mask, **kwargs):
 
     if args.model_type in model_list:
         if args.no_mask:
-            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
-            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, Tgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
     else:
         if args.no_mask:
-            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
-            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
 
     return Pgen, Mgen
 

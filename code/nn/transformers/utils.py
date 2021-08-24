@@ -24,3 +24,40 @@ def feed_forward(dim_input: int = 512, dim_feedforward: int = 2048) -> torch.nn.
         torch.nn.ReLU(),
         torch.nn.Linear(dim_feedforward, dim_input),
     )
+
+
+class AttentionHead(torch.nn.Module):
+    def __init__(self, dim_in: int, dim_k: int, dim_v: int):
+        super().__init__()
+        self.q = torch.nn.Linear(dim_in, dim_k)
+        self.k = torch.nn.Linear(dim_in, dim_k)
+        self.v = torch.nn.Linear(dim_in, dim_v)
+
+    def forward(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        return scaled_dot_product_attention(self.q(query), self.k(key), self.v(value))
+
+
+class MultiHeadAttention(torch.nn.Module):
+    def __init__(self, num_heads: int, dim_in: int, dim_k: int, dim_v: int):
+        super().__init__()
+        self.heads = torch.nn.ModuleList(
+            [AttentionHead(dim_in, dim_k, dim_v) for _ in range(num_heads)]
+        )
+        self.linear = torch.nn.Linear(num_heads * dim_v, dim_in)
+
+    def forward(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        return self.linear(
+            torch.cat([h(query, key, value) for h in self.heads], dim=-1)
+        )
+
+class Residual(torch.nn.Module):
+    def __init__(self, sublayer: torch.nn.Module, dimension: int, dropout: float = 0.1):
+        super().__init__()
+        self.sublayer = sublayer
+        self.norm = torch.nn.LayerNorm(dimension)
+        self.dropout = torch.nn.Dropout(dropout)
+
+    def forward(self, *tensors: Tensor) -> Tensor:
+        # Assume that the "value" tensor is given last, so we can compute the
+        # residual.  This matches the signature of 'MultiHeadAttention'.
+        return self.norm(tensors[-1] + self.dropout(self.sublayer(*tensors)))

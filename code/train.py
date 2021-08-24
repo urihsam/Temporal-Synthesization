@@ -26,6 +26,8 @@ from utils.dgat.edgamt_utils import train_model as train_edgamt
 from utils.tgat.etgamt_utils import train_model as train_etgamt
 from utils.tgat.tgamt_utils import train_model as train_tgamt
 
+from utils.igat.igamt_utils import train_model as train_igamt
+from utils.igat.igamt_utils_v2 import train_model as train_igamt_v2
 
 
 
@@ -37,7 +39,7 @@ def main(args):
     if args.test:
         assert args.test_model_filename != ""
     
-    torch.cuda.set_device(args.gpu_devidx) 
+    #torch.cuda.set_device(args.gpu_devidx) 
     splits = ["train", "valid", "test"]
 
     datasets = OrderedDict()
@@ -118,8 +120,16 @@ def main(args):
         """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
         """
         train_etgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+
+    elif args.model_type == "igamt": # triplet generative adversarial time-embedding transforls
+        """ There are two GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
+        """
+        train_igamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
     
-    
+    elif args.model_type == "igamt_v2": # triplet generative adversarial time-embedding transforls
+        """ There are two GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
+        """
+        train_igamt_v2(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
 if __name__ == '__main__':
 
@@ -135,6 +145,8 @@ if __name__ == '__main__':
     parser.add_argument('--valid_log', type=str, default='valid_log_file')
     parser.add_argument('--test_log', type=str, default='test_log_file')
     parser.add_argument('--model_path', type=str, default='models')
+    parser.add_argument('--private_model_path', type=str, default='models')
+    parser.add_argument('--private_model_filename', type=str, default="")
     parser.add_argument('--result_path', type=str, default='results')
     parser.add_argument('--struct_info_file', type=str, default='struct_info.npy')
     parser.add_argument('--max_length', type=int, default=50)
@@ -143,7 +155,6 @@ if __name__ == '__main__':
     parser.add_argument('--critic_freq_base', type=int, default=5)
     parser.add_argument('--critic_freq_hit', type=int, default=1)
     parser.add_argument('--use_spectral_norm', type=bool, default=False)
-    parser.add_argument('--use_attentioned_mask', type=bool, default=False)
     parser.add_argument('--no_mask', type=bool, default=False)
     parser.add_argument('--use_prob_mask', type=bool, default=False)
     parser.add_argument('--prob_mask_filename', type=str, default='not_nan_prob.npy')
@@ -152,22 +163,36 @@ if __name__ == '__main__':
     parser.add_argument('-bs', '--batch_size', type=int, default=32)
     parser.add_argument('--enc_learning_rate', type=float, default=0.001)
     parser.add_argument('--dec_learning_rate', type=float, default=0.001)
+    parser.add_argument('--imi_learning_rate', type=float, default=0.001)
+    parser.add_argument('--uni_learning_rate', type=float, default=0.001)
     parser.add_argument('--dx_learning_rate', type=float, default=0.001)
     parser.add_argument('--dz_learning_rate', type=float, default=0.001)
     parser.add_argument('--dm_learning_rate', type=float, default=0.001)
     parser.add_argument('--di_learning_rate', type=float, default=0.001)
     parser.add_argument('--dmi_learning_rate', type=float, default=0.001)
     parser.add_argument('--g_learning_rate', type=float, default=0.001)
+    parser.add_argument('--ax_learning_rate', type=float, default=0.001)
+    parser.add_argument('--az_learning_rate', type=float, default=0.001)
+    parser.add_argument('--am_learning_rate', type=float, default=0.001)
+    parser.add_argument('--gi_learning_rate', type=float, default=0.001)
+    #
     parser.add_argument('--enc_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--dec_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--imi_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--uni_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--dx_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--dz_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--dm_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--di_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--dmi_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('--g_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--ax_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--az_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--am_lr_decay_rate', type=float, default=0.99)
+    parser.add_argument('--gi_lr_decay_rate', type=float, default=0.99)
     parser.add_argument('-beta_r', '--beta_recon', type=float, default=10.0)
     parser.add_argument('-beta_m', '--beta_mask', type=float, default=1.0)
+    parser.add_argument('-beta_mt', '--beta_match', type=float, default=1.0)
     parser.add_argument('-beta_ra', '--beta_race', type=float, default=1.0)
     parser.add_argument('-beta_gd', '--beta_gender', type=float, default=1.0)
     parser.add_argument('-beta_k', '--beta_kld', type=float, default=1.0)
@@ -192,12 +217,18 @@ if __name__ == '__main__':
     parser.add_argument('-fis', '--filter_size', type=int, default=16)
     parser.add_argument('-ws', '--window_sizes', nargs='+', type=int, default=[2, 3])
     parser.add_argument('--dx_dropout', type=float, default=0.5)
+    parser.add_argument('--uni_feature_size', type=int, default=9)
+    parser.add_argument('--uni_feature_dropout', type=float, default=0.5)
+    parser.add_argument('--uni_filter_size', type=int, default=16)
+    parser.add_argument('--uni_window_sizes', nargs='+', type=int, default=[2, 3])
+    parser.add_argument('--uni_out_size', type=int, default=16)
     parser.add_argument('-ed', '--encoder_dropout', type=float, default=0.5)
     parser.add_argument('-dd', '--decoder_dropout', type=float, default=0.5)
     parser.add_argument('-fd', '--feature_dropout', type=float, default=0.5)
     parser.add_argument('-ga', '--gmlp_archs', nargs='+', type=int, default=[128, 128])
     parser.add_argument('-da', '--dmlp_archs', nargs='+', type=int, default=[256, 128])
 
+    parser.add_argument('--no_recon', type=bool, default=False)
     parser.add_argument('--dp_sgd', type=bool, default=False)
     parser.add_argument('--noise_multiplier', type=float, default=1)
     parser.add_argument('--l2_norm_clip', type=float, default=0.5)

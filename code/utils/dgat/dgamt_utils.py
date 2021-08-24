@@ -42,7 +42,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 dim_feedforward=args.hidden_size, #2048 #128
                 encoder_dropout=args.encoder_dropout,
                 decoder_dropout=args.decoder_dropout,
-                attentioned_mask = args.use_attentioned_mask,
                 use_prob_mask=args.use_prob_mask
                 )
 
@@ -320,11 +319,11 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
         if args.no_mask: # Pgen, Tgen, Mgen
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
 
         #import pdb; pdb.set_trace()
         Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()

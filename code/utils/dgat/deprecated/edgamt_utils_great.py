@@ -42,7 +42,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 dim_feedforward=args.hidden_size, #2048 #128
                 encoder_dropout=args.encoder_dropout,
                 decoder_dropout=args.decoder_dropout,
-                attentioned_mask = args.use_attentioned_mask,
                 use_prob_mask=args.use_prob_mask
                 )
 
@@ -375,15 +374,18 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         mCritic_loss = - Dminput + 0.5 * (Dmoutput + Dmgen)
             
         #
+        gender_loss, race_loss = 0.0, 0.0
+        '''
         gender_label = torch.nn.functional.one_hot(gender.squeeze(dim=1).cuda().long(), 2)
         gender_loss = Dx.cal_xentropy_loss(gender_in, gender_label) + Dx.cal_xentropy_loss(gender_out, gender_label) + Dx.cal_xentropy_loss(gender_gen, gender_label)
         
         race_label = torch.nn.functional.one_hot(race.squeeze(dim=1).cuda().long(), 3)
         race_loss = Dx.cal_xentropy_loss(race_in, race_label) + Dx.cal_xentropy_loss(race_out, race_label) + Dx.cal_xentropy_loss(race_gen, race_label)
+        '''
         if split == 'train':
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
-
+                '''
                 # Auxiliary loss: gender
                 opt_dix.zero_grad()
                 Dx.cal_xentropy_loss(gender_in, gender_label).backward(retain_graph=True)
@@ -394,7 +396,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
                 Dx.cal_xentropy_loss(race_out, race_label).backward(retain_graph=True)
                 Dx.cal_xentropy_loss(race_gen, race_label).backward(retain_graph=True)
                 opt_dix.step()
-
+                '''
                 # generated data
                 opt_dix.zero_grad()
                 Dinput, _, _ = Dx(tgt_tempo)

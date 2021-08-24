@@ -13,7 +13,7 @@ from pyvacy import optim, analysis
 from pyvacy.optim.dp_optimizer import DPAdam, DPSGD
 import pyvacy.analysis.moments_accountant as moments_accountant
 
-from nn.transformers.mixed_embedding_transformer import Transformer, TransformerDecoder
+from nn.transformers.mixed_embedding_transformer import Transformer, TransformerDecoder, Trans_Auxiliary_Discriminator
 from nn.generator import MLP_Generator
 from nn.discriminator import MLP_Discriminator, CNN_Discriminator, CNN_Auxiliary_Discriminator
 
@@ -30,8 +30,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             G = models["G"]
             Dz = models["Dz"]
             Imi = models["Imi"]
-            Di = models["Di"]
-            Dmi = models["Dmi"]
             
         else:
             dim_time = int((kwargs["time_shift"]+kwargs["time_scale"])*1.5)
@@ -50,12 +48,15 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 use_prob_mask=args.use_prob_mask
                 )
 
-            Dx = CNN_Auxiliary_Discriminator(
-                feature_size=args.feature_size,
-                feature_dropout=args.feature_dropout,
-                filter_size=args.filter_size,
-                window_sizes=args.window_sizes,
-                use_spectral_norm = args.use_spectral_norm
+            Dx = Trans_Auxiliary_Discriminator(
+                num_layers=args.dx_num_layers,
+                dim_feature=args.feature_size,
+                dim_model=args.dx_latent_size,
+                dim_time=dim_time,
+                num_heads=args.dx_num_heads, 
+                max_length=args.max_length,
+                dim_feedforward=args.dx_hidden_size,
+                dropout=args.dx_dropout
                 )
 
             # for mask
@@ -394,20 +395,20 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
         if args.no_mask:
-            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
-            Pimi, Timi, Mimi = Imi.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
+            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pimi, Timi, Mimi = Imi.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
-            Pimi, Timi, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
+            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pimi, Timi, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
         else:
-            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
-            Pimi, Timi, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
+            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pimi, Timi, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
 
         #import pdb; pdb.set_trace()
-        Dinput = Dx(tgt_tempo)
-        Doutput = Dx(Poutput)
-        Dgen = Dx(Pgen)
-        Dimi = Dx(Pimi)
+        Dinput, gender_in, race_in = Dx(tgt_tempo, tgt_time, gender, race)
+        Doutput, gender_out, race_out = Dx(Poutput, Toutput, gender, race)
+        Dgen, gender_gen, race_gen = Dx(Pgen, Tgen, sampled_gender, sampled_race)
+        Dimi, gender_imi, race_imi = Dx(Pimi, Timi, sampled_gender, sampled_race)
         #
         Dinput = Dinput.mean()
         Doutput = Doutput.mean()
@@ -460,37 +461,41 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
                 '''
                 # generated data
                 opt_dix.zero_grad()
-                Dinput = Dx(tgt_tempo)
-                Doutput = Dx(Poutput)
+                Dinput, _, _ = Dx(tgt_tempo, tgt_time, gender, race)
+                Doutput, _, _ = Dx(Poutput, Toutput, gender, race)
                 Dinput = Dinput.mean()
                 Doutput = Doutput.mean()
                 Dinput.backward(mone, inputs=params, retain_graph=True)
                 Doutput.backward(one, inputs=params, retain_graph=True)
-                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(inputs=params, retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, 
+                                        tgt_time, Toutput, gender, race,
+                                        tgt_mask, Moutput).backward(inputs=params, retain_graph=True)
                 opt_dix.step()
 
                 opt_dix.zero_grad()
-                Dinput = Dx(tgt_tempo)
-                Dgen = Dx(Pgen)
+                Dinput, _, _ = Dx(tgt_tempo, tgt_time, gender, race)
+                Dgen, _, _ = Dx(Pgen, Tgen, sampled_gender, sampled_race)
                 Dinput = Dinput.mean()
                 Dgen = Dgen.mean()
                 Dinput.backward(mone, inputs=params, retain_graph=True)
                 Dgen.backward(one, inputs=params, retain_graph=True)
-                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, tgt_mask, Mgen).backward(inputs=params, retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, 
+                                        tgt_time, Tgen, sampled_gender, sampled_race,
+                                        tgt_mask, Mgen).backward(inputs=params, retain_graph=True)
                 opt_dix.step()
 
-                '''
                 # from imitator
                 opt_dix.zero_grad()
-                Dinput = Dx(tgt_tempo)
-                Dimi = Dx(Pimi)
+                Dinput, _, _ = Dx(tgt_tempo, tgt_time, gender, race)
+                Dimi, _, _ = Dx(Pimi, Timi, sampled_gender, sampled_race)
                 Dinput = Dinput.mean()
                 Dimi = Dimi.mean()
                 Dinput.backward(mone, inputs=params, retain_graph=True)
                 Dimi.backward(one, inputs=params, retain_graph=True)
-                Dx.cal_gradient_penalty(tgt_tempo[:, :Pimi.size(1), :], Pimi, tgt_mask, Mimi).backward(inputs=params, retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Pimi.size(1), :], Pimi, 
+                                        tgt_time, Timi, sampled_gender, sampled_race,
+                                        tgt_mask, Mimi).backward(inputs=params, retain_graph=True)
                 opt_dix.step()
-                '''
 
                 # Step 2: Update Critic_m
                 params = tuple(Dm.parameters())
@@ -508,14 +513,13 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
                 Dm.cal_gradient_penalty(tgt_mask[:, :Mgen.size(1), :], Mgen).backward(inputs=params, retain_graph=True)
                 opt_dim.step()
 
-                '''
                 opt_dim.zero_grad()
                 Dminput, Dmimi = Dm(tgt_mask).mean(), Dm(Mimi).mean()
                 Dminput.backward(mone, inputs=params, retain_graph=True)
                 Dmimi.backward(one, inputs=params, retain_graph=True)
                 Dm.cal_gradient_penalty(tgt_mask[:, :Mimi.size(1), :], Mimi).backward(inputs=params, retain_graph=True)
                 opt_dim.step()
-                '''
+                
 
                 # Step 3: Update the Critic_z
                 params = tuple(Dz.parameters())
@@ -530,8 +534,8 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             # Step 4, 5: Update the Decoder and the Encoder
             params = tuple(Trans.parameters())
             opt_dec.zero_grad()
-            Doutput = Dx(Poutput, Moutput)
-            Dgen =  Dx(Pgen, Mgen)
+            Doutput, _, _ = Dx(Poutput, Toutput, gender, race, Moutput)
+            Dgen, _, _ =  Dx(Pgen, Tgen, sampled_gender, sampled_race, Mgen)
             Doutput = Doutput.mean()
             Dgen = Dgen.mean()
             Doutput.backward(mone, inputs=params, retain_graph=True)
@@ -556,7 +560,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             # Step 6: Update the Imitator
             params = tuple(Imi.parameters())
             opt_imi.zero_grad()
-            Dimi = Dx(Pimi, Mimi)
+            Dimi, _, _ = Dx(Pimi, Timi, sampled_gender, sampled_race, Mimi)
             Dimi = Dimi.mean()
             Dimi.backward(mone, inputs=params, retain_graph=True)
             # mask

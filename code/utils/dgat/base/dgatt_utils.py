@@ -314,11 +314,11 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         start_feature, start_time, start_mask = sample_start_feature_time_mask(z.size(0))
         kwargs["start_time"] = start_time
         if args.no_mask:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
 
         #import pdb; pdb.set_trace()
         Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
