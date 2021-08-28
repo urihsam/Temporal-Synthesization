@@ -124,9 +124,10 @@ class Decoder(nn.Module):
         m_output = m_output.view(b, s, self.feature_size)
         return p_output, m_output
 
-    def inference(self, start_feature, start_mask=None, prob_mask=None, n=4, z=None):
+    def inference(self, start_feature, start_mask=None, prob_mask=None, n=4, memory=None):
         if self.use_prob_mask:
             assert prob_mask is not None and start_mask is not None
+        z= memory
         if z is None:
             batch_size = n
             z = to_var(torch.randn([batch_size, self.latent_size]))

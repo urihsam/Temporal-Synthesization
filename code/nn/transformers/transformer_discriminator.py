@@ -19,8 +19,7 @@ class Trans_Discriminator(torch.nn.Module):
         max_length: int = 50,
         dim_feedforward: int = 2048, 
         dropout: float = 0.1,
-        use_spectral_norm=False,
-        gpu_idx: int = 0
+        use_spectral_norm=False
     ):
         super().__init__()
         self.trans = TransformerEncoder(
@@ -30,8 +29,7 @@ class Trans_Discriminator(torch.nn.Module):
             dim_time=dim_time,
             num_heads=num_heads,
             dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            gpu_idx=gpu_idx
+            dropout=dropout
         )
 
 
@@ -41,9 +39,9 @@ class Trans_Discriminator(torch.nn.Module):
         self.feature2binary = layer_
 
     def forward(self, tempo: Tensor, time: Tensor, mask: Tensor = None):
-        tempo = tempo.cuda(self.gpu_idx).float(); time=time.cuda(self.gpu_idx).int() 
-        gender = gender.cuda(self.gpu_idx).int(); race=race.cuda(self.gpu_idx).int()
-        if mask is not None: mask = mask.cuda(self.gpu_idx).float()
+        tempo = tempo.cuda().float(); time=time.cuda().int() 
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if mask is not None: mask = mask.cuda().float()
 
         if len(time.shape) == 3: time = time.squeeze(dim=2)
 
@@ -53,11 +51,11 @@ class Trans_Discriminator(torch.nn.Module):
         return scores
 
     def cal_gradient_penalty(self, real_data, fake_data, real_time, fake_time, real_mask=None, fake_mask=None, gp_lambda=10):
-        real_data = real_data.cuda(self.gpu_idx).float(); fake_data = fake_data.cuda(self.gpu_idx).float()
-        real_time=real_time.cuda(self.gpu_idx).int(); fake_time=fake_time.cuda(self.gpu_idx).int()
-        gender = gender.cuda(self.gpu_idx).int(); race=race.cuda(self.gpu_idx).int()
-        if real_mask is not None: real_mask = real_mask.cuda(self.gpu_idx).float()
-        if fake_mask is not None: fake_mask = fake_mask.cuda(self.gpu_idx).float()
+        real_data = real_data.cuda().float(); fake_data = fake_data.cuda().float()
+        real_time=real_time.cuda().int(); fake_time=fake_time.cuda().int()
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if real_mask is not None: real_mask = real_mask.cuda().float()
+        if fake_mask is not None: fake_mask = fake_mask.cuda().float()
         if len(real_time.shape) == 3: real_time = real_time.squeeze(dim=2)
         if len(fake_time.shape) == 3: fake_time = fake_time.squeeze(dim=2)
 
@@ -69,8 +67,8 @@ class Trans_Discriminator(torch.nn.Module):
         epsilon_t = epsilon_t.expand(real_time.size())
 
         if torch.cuda.is_available():
-            epsilon = epsilon.cuda(self.gpu_idx)
-            epsilon_t = epsilon_t.cuda(self.gpu_idx)
+            epsilon = epsilon.cuda()
+            epsilon_t = epsilon_t.cuda()
 
         if real_mask is not None:
             real_data = torch.mul(real_data, real_mask)
@@ -84,7 +82,7 @@ class Trans_Discriminator(torch.nn.Module):
         D_interpolates, _, _ = self.forward(interpolates, inter_time, gender, race)
 
         gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
-                                grad_outputs=torch.ones(D_interpolates.size()).cuda(self.gpu_idx) if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
                                 create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
         return gradient_penalty
@@ -101,8 +99,7 @@ class Trans_Auxiliary_Discriminator(torch.nn.Module):
         max_length: int = 50,
         dim_feedforward: int = 2048, 
         dropout: float = 0.1,
-        use_spectral_norm=False,
-        gpu_idx: int = 0
+        use_spectral_norm=False
     ):
         super().__init__()
         self.trans = TransformerEncoder(
@@ -112,8 +109,7 @@ class Trans_Auxiliary_Discriminator(torch.nn.Module):
             dim_time=dim_time,
             num_heads=num_heads,
             dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            gpu_idx=gpu_idx
+            dropout=dropout
         )
         # for output
         layer_out = torch.nn.Linear(max_length*dim_model, 1)
@@ -135,9 +131,9 @@ class Trans_Auxiliary_Discriminator(torch.nn.Module):
 
 
     def forward(self, tempo: Tensor, time: Tensor, gender: Tensor, race: Tensor, mask: Tensor = None) -> Tensor:
-        tempo = tempo.cuda(self.gpu_idx).float(); time=time.cuda(self.gpu_idx).int() 
-        gender = gender.cuda(self.gpu_idx).int(); race=race.cuda(self.gpu_idx).int()
-        if mask is not None: mask = mask.cuda(self.gpu_idx).float()
+        tempo = tempo.cuda().float(); time=time.cuda().int() 
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if mask is not None: mask = mask.cuda().float()
         if len(time.shape) == 3: time = time.squeeze(dim=2)
         feature_vecs = self.trans(tempo, time, gender, race, mask)
         feature_vecs = torch.reshape(feature_vecs, (feature_vecs.shape[0], -1))
@@ -147,11 +143,11 @@ class Trans_Auxiliary_Discriminator(torch.nn.Module):
         return real_scores, gender_probs, race_probs
 
     def cal_gradient_penalty(self, real_data, fake_data, real_time, fake_time, gender, race, real_mask=None, fake_mask=None, gp_lambda=10):
-        real_data = real_data.cuda(self.gpu_idx).float(); fake_data = fake_data.cuda(self.gpu_idx).float()
-        real_time=real_time.cuda(self.gpu_idx).int(); fake_time=fake_time.cuda(self.gpu_idx).int()
-        gender = gender.cuda(self.gpu_idx).int(); race=race.cuda(self.gpu_idx).int()
-        if real_mask is not None: real_mask = real_mask.cuda(self.gpu_idx).float()
-        if fake_mask is not None: fake_mask = fake_mask.cuda(self.gpu_idx).float()
+        real_data = real_data.cuda().float(); fake_data = fake_data.cuda().float()
+        real_time=real_time.cuda().int(); fake_time=fake_time.cuda().int()
+        gender = gender.cuda().int(); race=race.cuda().int()
+        if real_mask is not None: real_mask = real_mask.cuda().float()
+        if fake_mask is not None: fake_mask = fake_mask.cuda().float()
         if len(real_time.shape) == 3: real_time = real_time.squeeze(dim=2)
         if len(fake_time.shape) == 3: fake_time = fake_time.squeeze(dim=2)
         
@@ -163,8 +159,8 @@ class Trans_Auxiliary_Discriminator(torch.nn.Module):
         epsilon_t = epsilon_t.expand(real_time.size())
 
         if torch.cuda.is_available():
-            epsilon = epsilon.cuda(self.gpu_idx)
-            epsilon_t = epsilon_t.cuda(self.gpu_idx)
+            epsilon = epsilon.cuda()
+            epsilon_t = epsilon_t.cuda()
 
         if real_mask is not None:
             real_data = torch.mul(real_data, real_mask)
@@ -178,7 +174,7 @@ class Trans_Auxiliary_Discriminator(torch.nn.Module):
         D_interpolates, _, _ = self.forward(interpolates, inter_time, gender, race)
 
         gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
-                                grad_outputs=torch.ones(D_interpolates.size()).cuda(self.gpu_idx) if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
                                 create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
         return gradient_penalty

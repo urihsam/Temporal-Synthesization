@@ -44,8 +44,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 dim_feedforward=args.hidden_size, #2048 #128
                 encoder_dropout=args.encoder_dropout,
                 decoder_dropout=args.decoder_dropout,
-                use_prob_mask=args.use_prob_mask,
-                gpu_idx = 0
+                use_prob_mask=args.use_prob_mask
                 )
 
             Dx = CNN_Auxiliary_Discriminator(
@@ -53,8 +52,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
                 window_sizes=args.window_sizes,
-                use_spectral_norm = args.use_spectral_norm,
-                gpu_idx = 0
+                use_spectral_norm = args.use_spectral_norm
                 )
             
             # for mask
@@ -63,15 +61,13 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
                 window_sizes=args.window_sizes,
-                use_spectral_norm = args.use_spectral_norm,
-                gpu_idx = 0
+                use_spectral_norm = args.use_spectral_norm
                 )
 
             G = MLP_Generator(
                 input_size=args.noise_size,
                 output_size=args.latent_size,
-                archs=args.gmlp_archs,
-                gpu_idx = 0
+                archs=args.gmlp_archs
                 )
 
             Dz = CNN_Discriminator(
@@ -79,8 +75,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
                 window_sizes=args.window_sizes,
-                use_spectral_norm = args.use_spectral_norm,
-                gpu_idx = 0
+                use_spectral_norm = args.use_spectral_norm
                 )
             # imi
             Imi = GeneralTransformerDecoder(
@@ -95,10 +90,9 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 num_heads=args.num_heads,
                 dim_feedforward=args.hidden_size,
                 dropout=args.decoder_dropout,
-                use_prob_mask=args.use_prob_mask,
-                gpu_idx = 0,
-                linear=None,
-                linear_m=None
+                use_prob_mask=args.use_prob_mask
+                linear=Trans.decoder.linear,
+                linear_m=Trans.decoder.linear_m
             )
             
 
@@ -110,13 +104,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Dz = Dz.cuda()
             Imi = Imi.cuda()
 
-        if torch.cuda.device_count() > 1:
-            Trans = Trans.cuda(0)
-            Dx = Dx.cuda(0)
-            Dm = Dm.cuda(0)
-            G = G.cuda(0)
-            Dz = Dz.cuda(0)
-            Imi = Imi.cuda(0)
 
         
         
@@ -248,7 +235,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
     #
     Dec = models["Trans"].decoder
     Dec.eval()
-    model_generation(args, G, Dec, prob_mask, prefix=args.model_type+"_priv", **kwargs)
+    model_generation(args, G, Dec, prob_mask, prefix=args.model_type+"_pub", **kwargs)
 
 
 def model_generation(args, G_0, G_1, prob_mask, path=None, prefix=None, **kwargs,):
@@ -445,8 +432,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
             Pimi, _, Mimi = Imi.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
 
-        if torch.cuda.device_count() > 1:
-            Pimi = Pimi.cuda(0); Mimi = Mimi.cuda(0)
+
         
         # match
         imi_match_loss = args.beta_match*Imi.compute_recon_loss(Pimi, Pgen, Mimi, Mgen, type="mse")
@@ -565,7 +551,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             Dmimi.backward(mone, inputs=params, retain_graph=True)
             opt_imi.step()  
             
-            '''
             opt_imi.zero_grad()
             # match
             #imi_match_loss = args.beta_match*Imi.compute_recon_loss(Pimi, Pgen, Mimi, Mgen, type="mse")
@@ -577,7 +562,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             
             #defreeze_params(params)
             #
-            '''
 
             # Step 6: Update the Generator
             params = list(G.parameters())

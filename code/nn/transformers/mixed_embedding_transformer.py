@@ -45,12 +45,10 @@ class TransformerEncoder(torch.nn.Module):
         dim_time: int = 100,
         num_heads: int = 8, 
         dim_feedforward: int = 2048, 
-        dropout: float = 0.1,
-        gpu_idx: int = 0
+        dropout: float = 0.1
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-        self.gpu_idx = gpu_idx
         if time_embedding is None:
             time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
         if gender_embedding is None:
@@ -136,12 +134,10 @@ class GeneralTransformerDecoder(torch.nn.Module):
         dropout: float = 0.1, 
         use_prob_mask: bool = False,
         linear: torch.nn.Module = None,
-        linear_m: torch.nn.Module = None,
-        gpu_idx: int = 0
+        linear_m: torch.nn.Module = None
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-        self.gpu_idx = gpu_idx
         if time_embedding is None:
             time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
         if gender_embedding is None:
@@ -197,24 +193,24 @@ class GeneralTransformerDecoder(torch.nn.Module):
 
 
     def inference(self, start_feature: Tensor, memory: Tensor, start_mask: Tensor = None, prob_mask: Tensor = None, **kwargs):
-        start_feature = start_feature.cuda(self.gpu_idx)
-        memory = memory.cuda(self.gpu_idx)
+        start_feature = start_feature.cuda()
+        memory = memory.cuda()
         z = memory
         
         if self.use_prob_mask:
             assert prob_mask is not None and start_mask is not None
         
         if prob_mask is not None:
-            prob_mask = prob_mask.cuda(self.gpu_idx)
+            prob_mask = prob_mask.cuda()
         if start_mask is not None:
-            start_mask = start_mask.cuda(self.gpu_idx)
+            start_mask = start_mask.cuda()
             
         
         time_shift = kwargs["time_shift"]
         time_scale = kwargs["time_scale"]
         start_time = kwargs["start_time"]
-        gender = kwargs["gender"].cuda(self.gpu_idx)
-        race = kwargs["race"].cuda(self.gpu_idx)
+        gender = kwargs["gender"].cuda()
+        race = kwargs["race"].cuda()
         
         gen_gender = gender
         gen_race = race
@@ -224,22 +220,22 @@ class GeneralTransformerDecoder(torch.nn.Module):
         
 
         # required for dynamic stopping of sentence generation
-        sequence_idx = torch.arange(0, batch_size, out=self.tensor()).long().cuda(self.gpu_idx) # all idx of batch
-        sequence_running = torch.arange(0, batch_size, out=self.tensor()).long().cuda(self.gpu_idx) # all idx of batch which are still generating
-        sequence_mask = torch.ones(batch_size, out=self.tensor()).bool().cuda(self.gpu_idx)
-        sequence_length = torch.zeros(batch_size, out=self.tensor()).long().cuda(self.gpu_idx)
+        sequence_idx = torch.arange(0, batch_size, out=self.tensor()).long().cuda() # all idx of batch
+        sequence_running = torch.arange(0, batch_size, out=self.tensor()).long().cuda() # all idx of batch which are still generating
+        sequence_mask = torch.ones(batch_size, out=self.tensor()).bool().cuda()
+        sequence_length = torch.zeros(batch_size, out=self.tensor()).long().cuda()
 
-        running_seqs = torch.arange(0, batch_size, out=self.tensor()).long().cuda(self.gpu_idx) # idx of still generating sequences with respect to current loop
+        running_seqs = torch.arange(0, batch_size, out=self.tensor()).long().cuda() # idx of still generating sequences with respect to current loop
 
-        generations = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float().cuda(self.gpu_idx)
-        gen_masks = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float().cuda(self.gpu_idx)
-        #gen_times = self.tensor(batch_size, self.max_length, 1).fill_(0.0).float().cuda(self.gpu_idx)
-        gen_times = self.tensor(batch_size, self.max_length, 1).fill_(0.0).int().cuda(self.gpu_idx)
+        generations = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float().cuda()
+        gen_masks = self.tensor(batch_size, self.max_length, self.feature_size).fill_(0.0).float().cuda()
+        #gen_times = self.tensor(batch_size, self.max_length, 1).fill_(0.0).float().cuda()
+        gen_times = self.tensor(batch_size, self.max_length, 1).fill_(0.0).int().cuda()
         
         t=0
-        time = start_time.cuda(self.gpu_idx)
-        descaled_time = descale_time(time, time_shift, time_scale).cuda(self.gpu_idx)
-        pos_emb = position_embedding(self.max_length, self.dim_model)[0].cuda(self.gpu_idx)
+        time = start_time.cuda()
+        descaled_time = descale_time(time, time_shift, time_scale).cuda()
+        pos_emb = position_embedding(self.max_length, self.dim_model)[0].cuda()
         while(t+1<self.max_length and len(running_seqs)>0):
             batch_size = z.size(0)
             zs = torch.unbind(z, dim=1)
@@ -248,7 +244,7 @@ class GeneralTransformerDecoder(torch.nn.Module):
             #
             if t == 0:
                 # input for time step 0
-                input_sequence = start_feature.float().cuda(self.gpu_idx) # [batch, feature_size]
+                input_sequence = start_feature.float().cuda() # [batch, feature_size]
                 # save next input
                 generations = self._save_sample(generations, input_sequence, sequence_running, 0, add_grad=True)
                 # save time
@@ -257,7 +253,7 @@ class GeneralTransformerDecoder(torch.nn.Module):
                 if start_mask == None:
                     input_mask = None
                 else:
-                    input_mask = start_mask.float().cuda(self.gpu_idx) # [batch, feature_size]
+                    input_mask = start_mask.float().cuda() # [batch, feature_size]
                     # save next input
                     gen_masks = self._save_sample(gen_masks, input_mask, sequence_running, 0, add_grad=True)
 
@@ -315,7 +311,7 @@ class GeneralTransformerDecoder(torch.nn.Module):
 
             # get incr time, update time
             time += extract_incr_time_from_tempo_step(input_sequence)
-            descaled_time = descale_time(time, time_shift, time_scale).cuda(self.gpu_idx)
+            descaled_time = descale_time(time, time_shift, time_scale).cuda()
             
             #import pdb; pdb.set_trace()
             # update gloabl running sequence
@@ -421,8 +417,7 @@ class TransformerDecoder(GeneralTransformerDecoder):
         num_heads: int = 8, 
         dim_feedforward: int = 2048, 
         dropout: float = 0.1, 
-        use_prob_mask: bool = False,
-        gpu_idx: int = 0
+        use_prob_mask: bool = False
     ):
         super().__init__(
             time_embedding=time_embedding,
@@ -436,8 +431,7 @@ class TransformerDecoder(GeneralTransformerDecoder):
             num_heads=num_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            use_prob_mask=use_prob_mask,
-            gpu_idx=gpu_idx
+            use_prob_mask=use_prob_mask
         )
 
 
@@ -456,11 +450,9 @@ class Transformer(torch.nn.Module):
         encoder_dropout: float = 0.1, 
         decoder_dropout: float = 0.1, 
         activation: torch.nn.Module = torch.nn.ReLU(),
-        use_prob_mask: bool = False,
-        gpu_idx: int = 0
+        use_prob_mask: bool = False
     ):
         super().__init__()
-        self.gpu_idx = gpu_idx
         self.time_embedding = torch.nn.Embedding(dim_time, dim_model) # an embedding lookup dict with key range from 0 to dim_time-1
         self.gender_embedding = torch.nn.Embedding(2, dim_model)
         self.race_embedding = torch.nn.Embedding(3, dim_model)

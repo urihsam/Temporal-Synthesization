@@ -371,37 +371,35 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             # print the losses for each epoch
             print("Learning rate:\t%2.8f"%(lr_enc.get_last_lr()[0]))
             print("Batch loss:")
-            print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_loss/batch_size, mask_loss/batch_size, kld_loss/batch_size))
-            print("Accumulated loss:")
-            print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, kld_total_loss/n_data))
+            print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_loss, mask_loss, kld_loss))
             print()
             with open(log_file, "a+") as file:
                 file.write("Learning rate:\t%2.8f\n"%(lr_enc.get_last_lr()[0]))
                 file.write("Batch loss:\n")
-                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_loss/batch_size, mask_loss/batch_size, kld_loss/batch_size))
-                file.write("Accumulated loss:\n")
-                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, kld_total_loss/n_data))
+                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_loss, mask_loss, kld_loss))
                 file.write("===================================================\n")
     #
     # print the losses for each epoch
     if split == 'train':
         print("Learning rate:\t%2.8f"%(lr_enc.get_last_lr()[0]))
     print("Batch loss:")
-    print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_loss/batch_size, mask_loss/batch_size, kld_loss/batch_size))
-    print("Accumulated loss:")
-    print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, kld_total_loss/n_data))
+    print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_loss, mask_loss, kld_loss))
+    if split != "train":
+        print("Accumulated loss:")
+        print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f"%(split.upper(), recon_total_loss/iteration, mask_total_loss/iteration, kld_total_loss/iteration))
     print()
     with open(log_file, "a+") as file:
         if split == 'train':
             file.write("Learning rate:\t%2.8f\n"%(lr_enc.get_last_lr()[0]))
         file.write("Batch loss:\n")
-        file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_loss/batch_size, mask_loss/batch_size, kld_loss/batch_size))
-        file.write("Accumulated loss:\n")
-        file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, kld_total_loss/n_data))
+        file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_loss, mask_loss, kld_loss))
+        if split != "train":
+            file.write("Accumulated loss:\n")
+            file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\tkld_loss\t%9.4f\n"%(split.upper(), recon_total_loss/iteration, mask_total_loss/iteration, kld_total_loss/iteration))
         file.write("===================================================\n")
     
     if split == 'train':
         lr_enc.step()
         lr_dec.step()
     
-    return recon_total_loss/n_data
+    return recon_total_loss/iteration

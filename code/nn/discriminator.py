@@ -5,11 +5,10 @@ from utils.train_utils import to_var
 
 
 class MLP_Discriminator(torch.nn.Module):
-    def __init__(self, input_size, output_size, archs, activation=torch.nn.LeakyReLU(0.2), use_spectral_norm=False, gpu_idx=0):
+    def __init__(self, input_size, output_size, archs, activation=torch.nn.LeakyReLU(0.2), use_spectral_norm=False):
         super().__init__()
         self.input_size = input_size
         self.output_size = output_size
-        self.gpu_idx = gpu_idx
 
         layer_sizes = [input_size] + archs
         layers = []
@@ -44,14 +43,14 @@ class MLP_Discriminator(torch.nn.Module):
         epsilon = epsilon.expand(real_data.size())
 
         if torch.cuda.is_available():
-            epsilon = epsilon.cuda(self.gpu_idx)
+            epsilon = epsilon.cuda()
 
         interpolates = epsilon * real_data + (1 - epsilon) * fake_data
         interpolates = torch.autograd.Variable(interpolates, requires_grad=True)
         D_interpolates = self.forward(interpolates)
 
         gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
-                                grad_outputs=torch.ones(D_interpolates.size()).cuda(self.gpu_idx) if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
                                 create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
         return gradient_penalty
@@ -70,14 +69,13 @@ class MLP_Discriminator(torch.nn.Module):
 
 class CNN_Discriminator(torch.nn.Module):
 
-    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False, gpu_idx=0):
+    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False):
         super().__init__()
         self.feature_size = feature_size
         self.feature_dropout = torch.nn.Dropout(p=feature_dropout)
 
         self.filter_size = filter_size
         self.window_sizes = window_sizes
-        self.gpu_idx = gpu_idx
 
         layers = []
         for window_size in window_sizes:
@@ -120,7 +118,7 @@ class CNN_Discriminator(torch.nn.Module):
         epsilon = epsilon.expand(real_data.size())
 
         if torch.cuda.is_available():
-            epsilon = epsilon.cuda(self.gpu_idx)
+            epsilon = epsilon.cuda()
 
         if real_mask is not None:
             real_data = torch.mul(real_data, real_mask)
@@ -132,7 +130,7 @@ class CNN_Discriminator(torch.nn.Module):
         D_interpolates = self.forward(interpolates)
 
         gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
-                                grad_outputs=torch.ones(D_interpolates.size()).cuda(self.gpu_idx) if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
                                 create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
         return gradient_penalty
@@ -150,7 +148,7 @@ class CNN_Discriminator(torch.nn.Module):
 
 class CNN_Auxiliary_Discriminator(torch.nn.Module):
 
-    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False, use_auxiliary=False, gpu_idx=0):
+    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False, use_auxiliary=False):
         super().__init__()
         self.feature_size = feature_size
         self.feature_dropout = torch.nn.Dropout(p=feature_dropout)
@@ -158,7 +156,6 @@ class CNN_Auxiliary_Discriminator(torch.nn.Module):
         self.filter_size = filter_size
         self.window_sizes = window_sizes
         self.use_auxiliary = use_auxiliary
-        self.gpu_idx = gpu_idx
 
         layers = []
         for window_size in window_sizes:
@@ -222,7 +219,7 @@ class CNN_Auxiliary_Discriminator(torch.nn.Module):
         epsilon = epsilon.expand(real_data.size())
 
         if torch.cuda.is_available():
-            epsilon = epsilon.cuda(self.gpu_idx)
+            epsilon = epsilon.cuda()
 
         if real_mask is not None:
             real_data = torch.mul(real_data, real_mask)
@@ -237,7 +234,7 @@ class CNN_Auxiliary_Discriminator(torch.nn.Module):
             D_interpolates = self.forward(interpolates)
 
         gradients = torch.autograd.grad(outputs=D_interpolates, inputs=interpolates,
-                                grad_outputs=torch.ones(D_interpolates.size()).cuda(self.gpu_idx) if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
+                                grad_outputs=torch.ones(D_interpolates.size()).cuda() if torch.cuda.is_available() else torch.ones(D_interpolates.size()),
                                 create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
         return gradient_penalty
@@ -267,14 +264,13 @@ class CNN_Auxiliary_Discriminator(torch.nn.Module):
 
 class Auxiliary_Classifier(torch.nn.Module):
 
-    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False, gpu_idx = 0):
+    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, use_spectral_norm=False):
         super().__init__()
         self.feature_size = feature_size
         self.feature_dropout = torch.nn.Dropout(p=feature_dropout)
 
         self.filter_size = filter_size
         self.window_sizes = window_sizes
-        self.gpu_idx = gpu_idx
 
         layers = []
         for window_size in window_sizes:
@@ -344,7 +340,7 @@ class Auxiliary_Classifier(torch.nn.Module):
 
 class CNN_Net(torch.nn.Module):
 
-    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, out_size, gpu_idx=0):
+    def __init__(self, feature_size, feature_dropout, filter_size, window_sizes, out_size):
         super().__init__()
         self.feature_size = feature_size
         self.feature_dropout = torch.nn.Dropout(p=feature_dropout)
@@ -352,7 +348,6 @@ class CNN_Net(torch.nn.Module):
         self.filter_size = filter_size
         self.window_sizes = window_sizes
         self.out_size = out_size
-        self.gpu_idx=gpu_idx
 
         layers = []
         for window_size in window_sizes:
@@ -369,9 +364,9 @@ class CNN_Net(torch.nn.Module):
     def forward(self, prob_sequence, input_mask=None):
         batch_size = prob_sequence.size(0)
 
-        input_ = prob_sequence.view(batch_size, -1, self.feature_size).cuda(self.gpu_idx)
+        input_ = prob_sequence.view(batch_size, -1, self.feature_size).cuda()
         if input_mask is not None:
-            input_ = torch.mul(input_, input_mask.cuda(self.gpu_idx))
+            input_ = torch.mul(input_, input_mask.cuda())
 
         input_ = input_.unsqueeze(1).float() # num_channel
         feature_maps = [torch.nn.functional.leaky_relu(conv(input_), 0.2).squeeze(3) for conv in self.convs]

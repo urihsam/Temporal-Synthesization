@@ -13,7 +13,7 @@ from collections import OrderedDict, defaultdict
 def model_inference(args, decoder, zgen, prob_mask, **kwargs):
     # make up start feature
     start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
-    model_list = ["dgatt", "dgamt", "edgamt", "tgamt", "etgamt", "igamt", "igamt_v2"]
+    model_list = ["dgatt", "dgamt", "edgamt", "tgamt", "etgamt", "igamt", "igamt_v2", "igamt_v3"]
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
     elif args.model_type in model_list:

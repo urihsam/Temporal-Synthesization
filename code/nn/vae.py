@@ -120,7 +120,8 @@ class Decoder(nn.Module):
         return p_output, m_output
 
 
-    def inference(self, n=4, z=None):
+    def inference(self, n=4, memory=None):
+        z = memory
         if z is None:
             batch_size = n
             z = to_var(torch.randn([batch_size, self.latent_size]))

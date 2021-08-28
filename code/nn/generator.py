@@ -4,11 +4,10 @@ import torch.nn.utils.rnn as rnn_utils
 from utils.train_utils import to_var
 
 class MLP_Generator(nn.Module):
-    def __init__(self, input_size, output_size, archs, activation=nn.LeakyReLU(0.2), gpu_idx=0):
+    def __init__(self, input_size, output_size, archs, activation=nn.LeakyReLU(0.2)):
         super().__init__()
         self.input_size = input_size
         self.output_size = output_size
-        self.gpu_idx = gpu_idx
 
         layer_sizes = [input_size] + archs
         layers = []

@@ -93,12 +93,14 @@ class Decoder(nn.Module):
 
 
 
-    def forward(self, z, input_sequence, input_mask=None):
+    def forward(self, memory, input_sequence, input_mask=None):
         if input_mask == None:
             input_ = input_sequence
         else:
             input_ = torch.mul(input_sequence, input_mask)
         input_ = input_.float().cuda() # solve the issue: "RuntimeError: cuDNN error: CUDNN_STATUS_BAD_PARAM"
+        memory = memory.cuda()
+        z = memory
 
         hidden = self.latent2hidden(z)
         hidden = hidden.unsqueeze(0)
@@ -138,9 +140,10 @@ class Decoder(nn.Module):
         m_output = m_output.view(b, s, self.feature_size)
         return p_output, m_output
 
-    def inference(self, start_feature, start_mask=None, prob_mask=None, n=4, z=None):
+    def inference(self, start_feature, start_mask=None, prob_mask=None, n=4, memory=None):
         if self.use_prob_mask:
             assert prob_mask is not None and start_mask is not None
+        z = memory
         if z is None:
             batch_size = n
             z = to_var(torch.randn([batch_size, self.latent_size]))

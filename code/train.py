@@ -22,12 +22,8 @@ from utils.dgat.base.dgat_utils import train_model as train_dgat
 from utils.dgat.base.dgatt_utils import train_model as train_dgatt
 from utils.dgat.dgamt_utils import train_model as train_dgamt
 from utils.dgat.edgamt_utils import train_model as train_edgamt
-#
-from utils.tgat.etgamt_utils import train_model as train_etgamt
-from utils.tgat.tgamt_utils import train_model as train_tgamt
 
 from utils.igat.igamt_utils import train_model as train_igamt
-from utils.igat.igamt_utils_v2 import train_model as train_igamt_v2
 
 
 
@@ -39,7 +35,7 @@ def main(args):
     if args.test:
         assert args.test_model_filename != ""
     
-    #torch.cuda.set_device(args.gpu_devidx) 
+    torch.cuda.set_device(args.gpu_devidx) 
     splits = ["train", "valid", "test"]
 
     datasets = OrderedDict()
@@ -111,25 +107,12 @@ def main(args):
         """
         train_edgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
-    elif args.model_type == "tgamt": # triplet generative adversarial time-embedding transforls
-        """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
-        """
-        train_tgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
-
-    elif args.model_type == "etgamt": # triplet generative adversarial time-embedding transforls
-        """ There are three GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
-        """
-        train_etgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
 
     elif args.model_type == "igamt": # triplet generative adversarial time-embedding transforls
         """ There are two GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
         """
         train_igamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
-    
-    elif args.model_type == "igamt_v2": # triplet generative adversarial time-embedding transforls
-        """ There are two GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
-        """
-        train_igamt_v2(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+ 
 
 if __name__ == '__main__':
 
@@ -193,6 +176,8 @@ if __name__ == '__main__':
     parser.add_argument('-beta_r', '--beta_recon', type=float, default=10.0)
     parser.add_argument('-beta_m', '--beta_mask', type=float, default=1.0)
     parser.add_argument('-beta_mt', '--beta_match', type=float, default=1.0)
+    parser.add_argument('-beta_mt_g', '--beta_match_g', type=float, default=1.0)
+    parser.add_argument('-beta_mt_i', '--beta_match_i', type=float, default=1.0)
     parser.add_argument('-beta_ra', '--beta_race', type=float, default=1.0)
     parser.add_argument('-beta_gd', '--beta_gender', type=float, default=1.0)
     parser.add_argument('-beta_k', '--beta_kld', type=float, default=1.0)

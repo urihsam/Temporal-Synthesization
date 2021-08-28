@@ -117,7 +117,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
         #
         if args.dp_sgd == True: # opt_dx and opt_dz access origin data too?
             opt_dec = torch.optim.Adam(list(Trans.decoder.parameters())[:-4], lr=args.dec_learning_rate)
-            opt_lin = DPSGD(params=list(Trans.decoder.parameters())[-4:], lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_lin = DPSGD(params=list(Trans.decoder.parameters()[-4:]), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             opt_dx = DPSGD(params=Dx.parameters(), lr=args.dx_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
@@ -125,14 +125,10 @@ def train_model(args, datasets, prob_mask, **kwargs):
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             opt_dz = DPSGD(params=Dz.parameters(), lr=args.dz_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size, 
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
-            opt_imi = torch.optim.Adam(list(Imi.parameters())[:-4], lr=args.imi_learning_rate)
             
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
 
             print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
-
-
-            lr_lin = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_lin, gamma=args.dec_lr_decay_rate)
 
 
         lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
@@ -173,12 +169,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             "gen": lr_gen,
             "imi": lr_imi
         }
-
-        if args.dp_sgd == True: 
-            opts["lin"] = opt_lin
-            lrs["lin"] = lr_lin
-        
-
         min_valid_loss = float("inf")
         min_valid_path = ""
         for epoch in range(args.epochs):
@@ -347,10 +337,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         lr_gen = lrs["gen"]
         lr_imi = lrs["imi"]
 
-        if args.dp_sgd == True: 
-            opt_lin = opts["lin"]
-            lr_lin = lrs["lin"]
-
     
     recon_total_loss, mask_total_loss = 0.0, 0.0
     xCritic_total_loss, zCritic_total_loss, mCritic_total_loss = 0.0, 0.0, 0.0
@@ -460,8 +446,8 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
                 Doutput = Dx(Poutput)
                 Dinput = Dinput.mean()
                 Doutput = Doutput.mean()
-                Dinput.backward(mone, inputs=params, retain_graph=True) # maximize
-                Doutput.backward(one, inputs=params, retain_graph=True) # minimize
+                Dinput.backward(mone, inputs=params, retain_graph=True)
+                Doutput.backward(one, inputs=params, retain_graph=True)
                 Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(inputs=params, retain_graph=True)
                 opt_dx.step()
 
@@ -524,11 +510,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         
 
             # Step 4, 5: Update the Decoder and the Encoder
-            if args.dp_sgd:
-                params = list(Trans.parameters())[:-4]
-            else:
-                params = list(Trans.parameters())
-            
+            params = list(Trans.parameters())
             opt_dec.zero_grad()
             Doutput = Dx(Poutput, Moutput)
             Dgen =  Dx(Pgen, Mgen)
@@ -540,41 +522,18 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             Dmoutput, Dmgen = Dm(Moutput).mean(), Dm(Mgen).mean()
             Dmoutput.backward(mone, inputs=params, retain_graph=True)
             Dmgen.backward(mone, inputs=params, retain_graph=True)
-
+            
             opt_enc.zero_grad()
-
             Dreal = Dz(z).mean()
             Dreal.backward(one, inputs=params, retain_graph=True)
-            
+
             if args.no_recon == False:
                 recon_loss.backward(inputs=params, retain_graph=True)
                 if not args.no_mask and not args.use_prob_mask:
                     mask_loss.backward(inputs=params, retain_graph=True)
-
+            
             opt_dec.step()
             opt_enc.step()
-        
-            if args.dp_sgd:
-                params = list(Trans.parameters())[-4:]
-
-                opt_lin.zero_grad()
-                Doutput = Dx(Poutput, Moutput)
-                Dgen =  Dx(Pgen, Mgen)
-                Doutput = Doutput.mean()
-                Dgen = Dgen.mean()
-                Doutput.backward(mone, inputs=params, retain_graph=True)
-                Dgen.backward(mone, inputs=params, retain_graph=True)
-                # mask
-                Dmoutput, Dmgen = Dm(Moutput).mean(), Dm(Mgen).mean()
-                Dmoutput.backward(mone, inputs=params, retain_graph=True)
-                Dmgen.backward(mone, inputs=params, retain_graph=True)
-
-                if args.no_recon == False:
-                    recon_loss.backward(inputs=params, retain_graph=True)
-                    if not args.no_mask and not args.use_prob_mask:
-                        mask_loss.backward(inputs=params, retain_graph=True)
-                
-                opt_lin.step()
 
 
             # step 6: Update Imi
