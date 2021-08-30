@@ -46,8 +46,8 @@ def train_model(args, datasets, prob_mask):
         
         
 
-        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.learning_rate)
-        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.learning_rate)
+        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.dec_learning_rate)
         #
         if args.dp_sgd == True: # ??
             opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
@@ -59,8 +59,8 @@ def train_model(args, datasets, prob_mask):
 
 
 
-        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
-        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
 
         
         tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -156,7 +156,7 @@ def train_seq2seq_model(args, datasets, prob_mask):
             
         else:
             # model define
-            AE = Seq2seq_Variatonal_Autoencoder(
+            AE = Seq2seq_Variational_Autoencoder(
                 max_length=args.max_length,
                 rnn_type=args.rnn_type,
                 feature_size=args.feature_size,
@@ -174,11 +174,11 @@ def train_seq2seq_model(args, datasets, prob_mask):
         
         
 
-        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.learning_rate)
-        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.learning_rate)
+        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.dec_learning_rate)
         #
         if args.dp_sgd == True: # ??
-            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
@@ -186,8 +186,8 @@ def train_seq2seq_model(args, datasets, prob_mask):
             print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
 
 
-        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
-        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
 
         
 
@@ -257,7 +257,7 @@ def train_seq2seq_model(args, datasets, prob_mask):
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
         zgen = torch.randn((args.batch_size, args.latent_size))
-        Pgen, Mgen = model_inference(args, AE, zgen, prob_mask)
+        Pgen, Mgen = model_inference(args, AE.decoder, zgen, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -344,7 +344,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             # loss
             recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
             mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, tgt_mask)
-        kld_loss = args.bbeta_kld * AE.compute_kl_diver_loss(mu, log_var)
+        kld_loss = args.beta_kld * AE.compute_kl_diver_loss(mu, log_var)
 
         
         if split == 'train':
