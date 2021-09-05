@@ -96,7 +96,7 @@ class TransformerDecoderLayer(torch.nn.Module):
         return self.feed_forward(tgt)
 
 
-class TransformerDecoder(torch.nn.Module):
+class GeneralTransformerDecoder(torch.nn.Module):
     def __init__(
         self, 
         num_layers: int = 6,
@@ -106,7 +106,10 @@ class TransformerDecoder(torch.nn.Module):
         num_heads: int = 8, 
         dim_feedforward: int = 2048, 
         dropout: float = 0.1, 
+        no_generated_mask: bool = False,
         use_prob_mask: bool = False,
+        linear: torch.nn.Module = None,
+        linear_m: torch.nn.Module = None
     ):
         super().__init__()
         self.tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -115,13 +118,21 @@ class TransformerDecoder(torch.nn.Module):
         self.max_length = max_length
         self.feature_size = dim_feature
         self.dim_model = dim_model
+        self.no_generated_mask = no_generated_mask
         self.feature2hidden = torch.nn.Linear(dim_feature, dim_model)
         self.layers = torch.nn.ModuleList([
             TransformerDecoderLayer(dim_model, num_heads, dim_feedforward, dropout)
             for _ in range(num_layers)
         ])
-        self.linear = torch.nn.Linear(dim_model, dim_feature)
-        self.linear_m = torch.nn.Linear(dim_model, dim_feature)
+        if linear is not None:
+            self.linear = linear
+        else:
+            self.linear = torch.nn.Linear(dim_model, dim_feature)
+        if no_generated_mask == False:
+            if linear_m is not None:
+                self.linear_m = linear_m
+            else:
+                self.linear_m = torch.nn.Linear(dim_model, dim_feature)
 
     def forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor = None) -> Tensor:
         if tgt_mask is not None:
@@ -135,9 +146,12 @@ class TransformerDecoder(torch.nn.Module):
 
         output = torch.nn.functional.sigmoid(self.linear(tgt))
         
-        if tgt_mask == None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
+        if tgt_mask is None or self.use_prob_mask: # if use_prob_mask, no need to generate mask
             return output, None
-        mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
+        if self.no_generated_mask == False:
+            mask =  torch.nn.functional.sigmoid(self.linear_m(tgt))
+        else:
+            mask = None
         return output, mask
 
 
@@ -145,6 +159,7 @@ class TransformerDecoder(torch.nn.Module):
         if self.use_prob_mask:
             assert prob_mask is not None and start_mask is not None
         
+        start_feature = start_feature.cuda()
         memory = memory.cuda()
         z = memory
         batch_size = z.size(0)
@@ -172,7 +187,7 @@ class TransformerDecoder(torch.nn.Module):
                 input_sequence = start_feature.float().cuda() # [batch, feature_size]
                 # save next input
                 generations = self._save_sample(generations, input_sequence, sequence_running, 0, add_grad=True)
-                if start_mask == None:
+                if start_mask is None:
                     input_mask = None
                 else:
                     input_mask = start_mask.float().cuda() # [batch, feature_size]
@@ -187,7 +202,8 @@ class TransformerDecoder(torch.nn.Module):
             #import pdb; pdb.set_trace()
             input_ = self.feature2hidden(input_)
 
-            input_batch_size, seq_len, dimension = input_.size(0), input_.size(1), input_.size(2)
+            #input_batch_size, seq_len, dimension = input_.size(0), input_.size(1), input_.size(2)
+            input_batch_size = input_.size(0)
             if input_batch_size != batch_size:
                 import pdb; pdb.set_trace()
             #import pdb; pdb.set_trace()
@@ -222,11 +238,11 @@ class TransformerDecoder(torch.nn.Module):
             #
             # update gloabl running sequence
             sequence_length[sequence_running] += 1
-            sequence_mask[sequence_running] = (input_sequence.sum(dim=1) != 0).data # ??
+            sequence_mask[sequence_running] = (input_sequence.sum(dim=1) > 0).data # ??
             sequence_running = sequence_idx.masked_select(sequence_mask)
             
             # update local running sequences
-            running_mask = (input_sequence.sum(dim=1) != 0).data # ??
+            running_mask = (input_sequence.sum(dim=1) > 0).data # ??
             running_seqs = running_seqs.masked_select(running_mask)
 
             # prune input and hidden state according to local update
@@ -242,7 +258,7 @@ class TransformerDecoder(torch.nn.Module):
 
         output = generations
         
-        if start_mask == None or self.use_prob_mask:
+        if start_mask is None or self.use_prob_mask:
             return output, None
         
         mask = gen_masks
@@ -263,6 +279,67 @@ class TransformerDecoder(torch.nn.Module):
         save_to[running_seqs] = running_latest
 
         return save_to
+
+
+    def compute_mask_loss(self, output_mask, mask, type="xent"):
+        if type == "mse":
+            loss = torch.mean(torch.sum(torch.square(output_mask-mask), dim=(1, 2)))
+        elif type == "xent":
+            entropy = torch.mul(mask, torch.log(output_mask + 1e-12)) + torch.mul((1-mask), torch.log((1-output_mask + 1e-12)))
+            loss = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))
+        else:
+            raise "Wrong loss type"
+        return loss
+    
+
+    def compute_recon_loss(self, output, target, output_mask=None, mask=None, type="xent"):
+        if type == "mse":
+            loss_1 = torch.mean(torch.sum(torch.square(output-target), dim=(1, 2)))
+        elif type == "xent":
+            entropy = torch.mul(target, torch.log(output + 1e-12)) + torch.mul((1-target), torch.log((1-output + 1e-12)))
+            loss_1 = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))
+        else:
+            raise "Wrong loss type"
+        if output_mask is not None:
+            output = torch.mul(output, output_mask)
+        if mask is not None:
+            target = torch.mul(target, mask)
+        if type == "mse":
+            loss_2 = torch.mean(torch.sum(torch.square(output-target), dim=(1, 2)))
+        elif type == "xent":
+            entropy = torch.mul(target, torch.log(output + 1e-12)) + torch.mul((1-target), torch.log((1-output + 1e-12)))
+            loss_2 = torch.mean(torch.sum(-1.0*entropy, dim=(1, 2)))  
+        else:
+            raise "Wrong loss type"
+ 
+        return (loss_1 + loss_2)/2
+    
+
+
+class TransformerDecoder(GeneralTransformerDecoder):
+    def __init__(
+        self, 
+        num_layers: int = 6,
+        max_length: int = 50,
+        dim_feature: int = 9,
+        dim_model: int = 512, 
+        num_heads: int = 8, 
+        dim_feedforward: int = 2048, 
+        dropout: float = 0.1, 
+        no_generated_mask: bool = False,
+        use_prob_mask: bool = False,
+    ):
+        super().__init__(
+            num_layers=num_layers,
+            max_length=max_length,
+            dim_feature=dim_feature,
+            dim_model=dim_model,
+            num_heads=num_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            no_generated_mask=no_generated_mask,
+            use_prob_mask=use_prob_mask
+        )
     
 
 class Transformer(torch.nn.Module):
@@ -278,6 +355,7 @@ class Transformer(torch.nn.Module):
         encoder_dropout: float = 0.1, 
         decoder_dropout: float = 0.1, 
         activation: torch.nn.Module = torch.nn.ReLU(),
+        no_generated_mask: bool = False,
         use_prob_mask: bool = False,
     ):
         super().__init__()
@@ -297,17 +375,20 @@ class Transformer(torch.nn.Module):
             num_heads=num_heads,
             dim_feedforward=dim_feedforward,
             dropout=decoder_dropout,
+            no_generated_mask=no_generated_mask,
             use_prob_mask=use_prob_mask
         )
 
     def forward(self, src: Tensor, tgt: Tensor, src_mask: Tensor = None, tgt_mask: Tensor = None) -> Tensor:
-        src = src.float(); src_mask = src_mask.float()
-        tgt = tgt.float(); tgt_mask = tgt_mask.float()
+        src = src.float(); 
+        tgt = tgt.float();
+        if src_mask is not None: src_mask = src_mask.float()
+        if tgt_mask is not None: tgt_mask = tgt_mask.float()
         #import pdb; pdb.set_trace()
         memory = self.encoder(src, src_mask)
         output, mask = self.decoder(tgt, memory, tgt_mask)
         # build a target prob tensor
-        if tgt_mask == None:
+        if tgt_mask is None:
             p_input = tgt
         else:
             p_input = torch.mul(tgt, tgt_mask)

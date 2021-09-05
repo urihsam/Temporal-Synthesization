@@ -7,15 +7,15 @@ import numpy as np
 from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
-from utils.train_utils import to_var,sample_gender_race, sample_start_feature_time_mask, sample_mask_from_prob, model_inference
+from utils.train_utils import to_var, sample_start_feature_time_mask, sample_mask_from_prob, ehr_model_inference as model_inference
 
 from pyvacy import optim, analysis
 from pyvacy.optim.dp_optimizer import DPAdam, DPSGD
 import pyvacy.analysis.moments_accountant as moments_accountant
 
-from nn.transformers.mixed_embedding_transformer import Transformer
+from nn.transformers.time_embedding_transformer import Transformer
 from nn.generator import MLP_Generator
-from nn.discriminator import MLP_Discriminator, CNN_Discriminator, CNN_Auxiliary_Discriminator
+from nn.discriminator import MLP_Discriminator, CNN_Discriminator
 
 
 def train_model(args, datasets, prob_mask, **kwargs):
@@ -26,7 +26,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             models = load_model(model_path)
             Trans = models["Trans"]
             Dx = models["Dx"]
-            Dm = models["Dm"]
             G = models["G"]
             Dz = models["Dz"]
             
@@ -46,16 +45,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 use_prob_mask=args.use_prob_mask
                 )
 
-            Dx = CNN_Auxiliary_Discriminator(
-                feature_size=args.feature_size,
-                feature_dropout=args.feature_dropout,
-                filter_size=args.filter_size,
-                window_sizes=args.window_sizes,
-                use_spectral_norm = args.use_spectral_norm
-                )
-            
-            # for mask
-            Dm = CNN_Discriminator(
+            Dx = CNN_Discriminator(
                 feature_size=args.feature_size,
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
@@ -81,7 +71,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
         if torch.cuda.is_available():
             Trans = Trans.cuda()
             Dx = Dx.cuda()
-            Dm = Dm.cuda()
             G = G.cuda()
             Dz = Dz.cuda()
         
@@ -89,7 +78,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
         opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.enc_learning_rate)
         opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.dec_learning_rate)
         opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.dx_learning_rate)
-        opt_dim = torch.optim.Adam(Dm.parameters(), lr=args.dm_learning_rate)
         opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.dz_learning_rate)
         opt_gen = torch.optim.Adam(G.parameters(), lr=args.g_learning_rate)
         #
@@ -106,7 +94,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
         lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
         lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
         lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.dx_lr_decay_rate)
-        lr_dim = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dim, gamma=args.dm_lr_decay_rate)
         lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.dz_lr_decay_rate)
         lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.g_lr_decay_rate)
 
@@ -116,7 +103,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
         models = {
                 "Trans": Trans,
                 "Dx": Dx,
-                "Dm": Dm,
                 "G": G,
                 "Dz": Dz
             } 
@@ -125,7 +111,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             "enc": opt_enc,
             "dec": opt_dec,
             "dix": opt_dix,
-            "dim": opt_dim,
             "diz": opt_diz,
             "gen": opt_gen
         }
@@ -133,7 +118,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             "enc": lr_enc,
             "dec": lr_dec,
             "dix": lr_dix,
-            "dim": lr_dim,
             "diz": lr_diz,
             "gen": lr_gen
         }
@@ -152,7 +136,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file, **kwargs)
+            _, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file, **kwargs)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -165,23 +149,10 @@ def train_model(args, datasets, prob_mask, **kwargs):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file, **kwargs)
+                valid_loss, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file, **kwargs)
                 print("****************************************************")
                 print()
-                if valid_loss is None:
-                    path = "{}/model_ep_{}".format(args.model_path, epoch)
-                    min_valid_path = path
-
-                    models = {
-                        "Trans": Trans,
-                        "Dx": Dx,
-                        "Dm": Dm,
-                        "G": G,
-                        "Dz": Dz
-                    }
-                    save_model(models, path)
-
-                elif valid_loss < min_valid_loss:
+                if valid_loss < min_valid_loss:
                     min_valid_loss = valid_loss
                     path = "{}/model_vloss_{}".format(args.model_path, valid_loss)
                     min_valid_path = path
@@ -189,7 +160,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                     models = {
                         "Trans": Trans,
                         "Dx": Dx,
-                        "Dm": Dm,
                         "G": G,
                         "Dz": Dz
                     }
@@ -232,13 +202,11 @@ def train_model(args, datasets, prob_mask, **kwargs):
 def save_model(models, path):
     Trans = models["Trans"]
     Dx = models["Dx"]
-    Dm = models["Dm"]
     G = models["G"]
     Dz = models["Dz"]
 
     torch.save(Trans, "{}_Trans".format(path))
     torch.save(Dx, "{}_Dx".format(path))
-    torch.save(Dm, "{}_Dm".format(path))
     torch.save(G, "{}_G".format(path))
     torch.save(Dz, "{}_Dz".format(path))
 
@@ -246,14 +214,12 @@ def save_model(models, path):
 def load_model(path):
     Trans = torch.load("{}_Trans".format(path))
     Dx = torch.load("{}_Dx".format(path))
-    Dm = torch.load("{}_Dm".format(path))
     G = torch.load("{}_G".format(path))
     Dz = torch.load("{}_Dz".format(path))
 
     models = {
         "Trans": Trans,
         "Dx": Dx,
-        "Dm": Dm,
         "G": G,
         "Dz": Dz
     }
@@ -263,7 +229,6 @@ def load_model(path):
 def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file, **kwargs):
     Trans = models["Trans"]
     Dx = models["Dx"]
-    Dm = models["Dm"]
     G = models["G"]
     Dz = models["Dz"]
     if split == 'train':
@@ -271,21 +236,18 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         opt_enc = opts["enc"]
         opt_dec = opts["dec"]
         opt_dix = opts["dix"]
-        opt_dim = opts["dim"]
         opt_diz = opts["diz"]
         opt_gen = opts["gen"]
         # lr scheduler
         lr_enc = lrs["enc"]
         lr_dec = lrs["dec"]
         lr_dix = lrs["dix"]
-        lr_dim = lrs["dim"]
         lr_diz = lrs["diz"]
         lr_gen = lrs["gen"]
 
     # init
     recon_total_loss, mask_total_loss = 0.0, 0.0
-    xCritic_total_loss, zCritic_total_loss, mCritic_total_loss = 0.0, 0.0, 0.0
-    match_total_loss, m_match_total_loss = 0.0, 0.0
+    xCritic_total_loss, zCritic_total_loss = 0.0, 0.0
     
     n_data = 0
 
@@ -294,7 +256,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         Trans.decoder_dropout=args.decoder_dropout
         Trans.train()
         Dx.train()
-        Dm.train()
         G.train()
         Dz.train()
     else:
@@ -302,7 +263,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         Trans.decoder_dropout=0.0
         Trans.eval()
         Dx.eval()
-        Dm.eval()
         G.eval()
         Dz.eval()
 
@@ -320,128 +280,75 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             one = one.cuda()
             mone = mone.cuda()
         
+        src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
+        src_time = batch['src_time']; tgt_time = batch['tgt_time']
+        src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
+
         #import pdb; pdb.set_trace()
         # Step 0: Evaluate current loss
         
         #print("max src_time", torch.amax(batch['src_time'], [0,1]), " -- min src_time", torch.amin(batch['src_time'], [0,1]))
         #print("max tgt_time", torch.amax(batch['tgt_time'], [0,1]), " -- min tgt_time", torch.amin(batch['tgt_time'], [0,1]))
-        src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
-        src_time = batch['src_time']; tgt_time = batch['tgt_time']
-        gender = batch['gender']
-        race = batch['race']
-        src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
-        src_ava = batch['src_ava']; tgt_ava = batch['tgt_ava']
-
+        
         if args.no_mask:
-            z, Pinput, Poutput, Toutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
-                                                None, None, src_ava, tgt_ava)
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, 
+                                                None, None)
+            # loss
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, Toutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
-                                                src_mask, tgt_mask, src_ava, tgt_ava)
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, 
+                                                src_mask, tgt_mask)
             output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
+            # loss
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            z, Pinput, Poutput, Toutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
-                                                src_mask, tgt_mask, src_ava, tgt_ava)
+            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, 
+                                                src_mask, tgt_mask)
+            # loss
+            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
+            mask_loss = args.beta_mask * Trans.compute_mask_loss(Moutput, tgt_mask)
 
         zgen = G(batch_size=z.size(0)*args.max_length)
         zgen = torch.reshape(zgen, (z.size(0), args.max_length, -1))
         # make up start feature
         start_feature, start_time, start_mask = sample_start_feature_time_mask(z.size(0))
         kwargs["start_time"] = start_time
-        sampled_gender, sampled_race = sample_gender_race(z.size(0))
-        kwargs["gender"] = sampled_gender
-        kwargs["race"] = sampled_race
         if args.no_mask:
-            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
         elif args.use_prob_mask:
-            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
-            Pgen, Tgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
 
         #import pdb; pdb.set_trace()
-        # only for tempo data without mask
-        Dinput, gender_in, race_in = Dx(tgt_tempo)
-        Doutput, gender_out, race_out = Dx(Poutput)
-        Dgen, gender_gen, race_gen = Dx(Pgen)
-        #
-        Dinput = Dinput.mean()
-        Doutput = Doutput.mean()
-        Dgen = Dgen.mean()
-
+        Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
         # reshape z, zgen
         #z = torch.reshape(z, (-1, z.size(-1)))
         #zgen = torch.reshape(zgen, (-1, zgen.size(-1)))
         Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
 
-        #
-        Dminput, Dmoutput, Dmgen = Dm(tgt_mask).mean(), Dm(Moutput).mean(), Dm(Mgen).mean()
-
         xCritic_loss = - Dinput + 0.5 * (Doutput + Dgen)
         zCritic_loss = - Dreal + Dfake
-        mCritic_loss = - Dminput + 0.5 * (Dmoutput + Dmgen)
+            
 
-        # match loss
-        match_loss = 0.0
-        m_match_loss = 0.0
-        '''
-        Dinput_maps = Dx(tgt_tempo, tgt_mask, early_stem=True)
-        Doutput_maps = Dx(Poutput, Moutput, early_stem=True)
-        match_loss = 0.0
-        for Dinput_map, Doutput_map in list(zip(Dinput_maps, Doutput_maps)):
-            match_loss += Dx.cal_mse_loss(Dinput_map, Doutput_map)
-        match_loss *= args.beta_match
-        # mask match loss
-        if args.no_mask == False and args.use_prob_mask == False:
-            Dminput_maps = Dm(tgt_mask, early_stem=True)
-            Dmoutput_maps = Dm(Moutput, early_stem=True)
-            m_match_loss = 0.0
-            for Dminput_map, Dmoutput_map in list(zip(Dminput_maps, Dmoutput_maps)):
-                m_match_loss += Dm.cal_mse_loss(Dminput_map, Dmoutput_map)
-            m_match_loss *= args.beta_match
-        else:
-            m_match_loss = 0.0
-        '''
-        #
         if split == 'train':
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
-                # generated data
                 opt_dix.zero_grad()
-                Dinput, _, _ = Dx(tgt_tempo)
-                Doutput, _, _ = Dx(Poutput)
-                Dinput = Dinput.mean()
-                Doutput = Doutput.mean()
+                Dinput, Doutput = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Doutput.backward(one, retain_graph=True)
                 Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(retain_graph=True)
                 opt_dix.step()
 
                 opt_dix.zero_grad()
-                Dinput, _, _ = Dx(tgt_tempo)
-                Dgen, _, _ = Dx(Pgen)
-                Dinput = Dinput.mean()
-                Dgen = Dgen.mean()
+                Dinput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Pgen, Mgen).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Dgen.backward(one, retain_graph=True)
                 Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, tgt_mask, Mgen).backward(retain_graph=True)
                 opt_dix.step()
-
-                # Step 2: Update Critic_m
-                opt_dim.zero_grad()
-                Dminput, Dmoutput = Dm(tgt_mask).mean(), Dm(Moutput).mean()
-                Dminput.backward(mone, retain_graph=True)
-                Dmoutput.backward(one, retain_graph=True)
-                Dm.cal_gradient_penalty(tgt_mask[:, :Moutput.size(1), :], Moutput).backward(retain_graph=True)
-                opt_dim.step()
-
-                opt_dim.zero_grad()
-                Dminput, Dmgen = Dm(tgt_mask).mean(), Dm(Mgen).mean()
-                Dminput.backward(mone, retain_graph=True)
-                Dmgen.backward(one, retain_graph=True)
-                Dm.cal_gradient_penalty(tgt_mask[:, :Mgen.size(1), :], Mgen).backward(retain_graph=True)
-                opt_dim.step()
                     
-                # Step 3: Update the Critic_z
+                # Step 2: Update the Critic_z
                 opt_diz.zero_grad()
                 Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
                 Dreal.backward(mone, retain_graph=True)
@@ -449,116 +356,82 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
                 Dz.cal_gradient_penalty(z, zgen).backward()
                 opt_diz.step()
 
-            # Step 4, 5: Update the Decoder and the Encoder
+            # Step 3, 4: Update the Decoder and the Encoder
             opt_dec.zero_grad()
-            Doutput, _, _ = Dx(Poutput, Moutput)
-            Dgen, _, _ =  Dx(Pgen, Mgen)
-            Doutput = Doutput.mean()
-            Dgen = Dgen.mean()
+            Doutput, Dgen = Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
             Doutput.backward(mone, retain_graph=True)
             Dgen.backward(mone, retain_graph=True)
-            # mask
-            Dmoutput, Dmgen = Dm(Moutput).mean(), Dm(Mgen).mean()
-            Dmoutput.backward(mone, retain_graph=True)
-            Dmgen.backward(mone, retain_graph=True)
             
             opt_enc.zero_grad()
             Dreal = Dz(z).mean()
             Dreal.backward(one, retain_graph=True)
 
-            
-            # match loss
-            Dinput_maps = Dx(tgt_tempo, tgt_mask, early_stem=True)
-            Doutput_maps = Dx(Poutput, Moutput, early_stem=True)
-            match_loss = 0.0
-            for Dinput_map, Doutput_map in list(zip(Dinput_maps, Doutput_maps)):
-                match_loss += Dx.cal_mse_loss(Dinput_map, Doutput_map)
-            match_loss *= args.beta_match
-            match_loss.backward(retain_graph=True)
-            # mask match loss
-            if args.no_mask == False and args.use_prob_mask == False:
-                Dminput_maps = Dm(tgt_mask, early_stem=True)
-                Dmoutput_maps = Dm(Moutput, early_stem=True)
-                m_match_loss = 0.0
-                for Dminput_map, Dmoutput_map in list(zip(Dminput_maps, Dmoutput_maps)):
-                    m_match_loss += Dm.cal_mse_loss(Dminput_map, Dmoutput_map)
-                m_match_loss *= args.beta_match
-                m_match_loss.backward(retain_graph=True)
+            recon_loss.backward(retain_graph=True)
+            if not args.no_mask and not args.use_prob_mask:
+                mask_loss.backward(retain_graph=True)
             
             opt_dec.step()
             opt_enc.step()
 
-            # Step 6: Update the Generator
+            # Step 5: Update the Generator
             opt_gen.zero_grad()
             Dfake = Dz(zgen).mean()
-            Dfake.backward(mone)
+            Dfake.backward(mone, retain_graph=True)
             opt_gen.step()
         
         #import pdb; pdb.set_trace()
         #
-        mask_loss = 0.0
-        recon_loss = 0.0
+        recon_total_loss += recon_loss.data
+        if not args.no_mask and not args.use_prob_mask:
+            mask_total_loss += mask_loss.data
+        else:
+            mask_total_loss = 0.0
+            mask_loss = 0.0
         xCritic_total_loss += xCritic_loss.data
         zCritic_total_loss += zCritic_loss.data
-        mCritic_total_loss += mCritic_loss.data
-        match_total_loss += match_loss
-        m_match_total_loss += m_match_loss
 
         if split == 'train' and iteration % args.train_eval_freq == 0:
             # print the losses for each epoch
             print("Learning rate:\t%2.8f"%(lr_gen.get_last_lr()[0]))
             print("Batch loss:")
-            print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f"%(
-                    split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, mCritic_loss/batch_size,
-                    match_loss/batch_size, m_match_loss/batch_size))
-            print("Accumulated loss:")
-            print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f"%(
-                    split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, mCritic_total_loss/n_data,
-                    match_total_loss/n_data, m_match_total_loss/n_data))
+            print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
             print()
             with open(log_file, "a+") as file:
                 file.write("Learning rate:\t%2.8f\n"%(lr_gen.get_last_lr()[0]))
                 file.write("Batch loss:\n")
-                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f\n"%(
-                    split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, mCritic_loss/batch_size,
-                    match_loss/batch_size, m_match_loss/batch_size))
-                file.write("Accumulated loss:\n")
-                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f\n"%(
-                    split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, mCritic_total_loss/n_data,
-                    match_total_loss/n_data, m_match_total_loss/n_data))
+                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\n"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
                 file.write("===================================================\n")
     #
     # print the losses for each epoch
     if split == 'train':
         print("Learning rate:\t%2.8f"%(lr_gen.get_last_lr()[0]))
     print("Batch loss:")
-    print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f"%(
-            split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, mCritic_loss/batch_size,
-            match_loss/batch_size, m_match_loss/batch_size))
-    print("Accumulated loss:")
-    print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f"%(
-            split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, mCritic_total_loss/n_data,
-            match_total_loss/n_data, m_match_total_loss/n_data))
+    print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
+    if split != "train":
+        print("Accumulated loss:")
+        print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f"%(split.upper(), recon_total_loss/iteration, mask_total_loss/iteration, xCritic_total_loss/iteration, zCritic_total_loss/iteration))
     print()
     with open(log_file, "a+") as file:
         if split == 'train':
             file.write("Learning rate:\t%2.8f\n"%(lr_gen.get_last_lr()[0]))
         file.write("Batch loss:\n")
-        file.write("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f\n"%(
-            split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, mCritic_loss/batch_size,
-            match_loss/batch_size, m_match_loss/batch_size))
-        file.write("Accumulated loss:\n")
-        file.write("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tmCritic_loss\t%9.4f\nmatch_loss\t%9.4f\tmask_match_loss\t%9.4f\n"%(
-            split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, mCritic_total_loss/n_data,
-            match_total_loss/n_data, m_match_total_loss/n_data))
+        file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\n"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
+        if split != "train":
+            file.write("Accumulated loss:\n")
+            file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\n"%(split.upper(), recon_total_loss/iteration, mask_total_loss/iteration, xCritic_total_loss/iteration, zCritic_total_loss/iteration))
         file.write("===================================================\n")
     
     if split == 'train':
         lr_enc.step()
         lr_dec.step()
         lr_dix.step()
-        lr_dim.step() # lr_dix.step()
         lr_diz.step()
         lr_gen.step()
     
-    return None
+    models = {
+        "Trans": Trans,
+        "Dx": Dx,
+        "G": G,
+        "Dz": Dz
+    }
+    return recon_total_loss/iteration, models

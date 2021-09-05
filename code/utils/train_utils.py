@@ -10,15 +10,14 @@ from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 
 
-def model_inference(args, decoder, zgen, prob_mask, **kwargs):
+def ehr_model_inference(args, decoder, zgen, prob_mask, **kwargs):
     # make up start feature
-    start_feature, start_time, start_mask = sample_start_feature_time_mask(zgen.size(0))
+    start_feature, start_time, start_mask, sampled_gender, sampled_race = sample_start_feature_time_mask_gender_race(zgen.size(0))
     model_list = ["dgatt", "dgamt", "edgamt", "tgamt", "etgamt", "igamt", "igamt_v2", "igamt_v3"]
     if args.model_type == "dgatt":
         kwargs["start_time"] = start_time
     elif args.model_type in model_list:
         kwargs["start_time"] = start_time
-        sampled_gender, sampled_race = sample_gender_race(zgen.size(0))
         kwargs["gender"] = sampled_gender
         kwargs["race"] = sampled_race
 
@@ -36,6 +35,14 @@ def model_inference(args, decoder, zgen, prob_mask, **kwargs):
             Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
         else:
             Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
+
+    return Pgen, Mgen
+
+
+def mnist_model_inference(args, decoder, zgen, prob_mask, **kwargs):
+    # make up start feature
+    start_feature = torch.tensor(np.zeros((batch_size, fea_size)))
+    Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
 
     return Pgen, Mgen
 
@@ -66,6 +73,20 @@ def sample_start_feature_time_mask(batch_size):
     start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1]*8+[0]), 0), [batch_size, 1]))
 
     return start_feature, year, start_mask
+
+
+
+def sample_start_feature_time_mask_gender_race(batch_size):
+    padding = torch.zeros(batch_size, 1, dtype=torch.float)
+    age = torch.tensor(np.random.uniform(size=(batch_size, 1))*0.9, dtype=torch.float)
+    year = torch.tensor(np.random.uniform(size=(batch_size, 1))*0.9, dtype=torch.float)
+    gender, race = sample_gender_race(batch_size)
+    gender_ = torch.nn.functional.one_hot(gender.squeeze(1).long(), num_classes=2)
+    race_ = torch.nn.functional.one_hot(race.squeeze(1).long(), num_classes=3)
+    start_feature = torch.cat((age, year, age, year, gender_, race_), 1)
+    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1]*9), 0), [batch_size, 1]))
+
+    return start_feature, year, start_mask, gender, race
 
 
 def extract_time_from_start_feature(start_feature):

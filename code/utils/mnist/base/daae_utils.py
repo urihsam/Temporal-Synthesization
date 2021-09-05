@@ -7,41 +7,39 @@ import numpy as np
 from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
-from utils.train_utils import to_var,sample_gender_race, sample_start_feature_time_mask, sample_mask_from_prob, model_inference
+from utils.train_utils import to_var, mnist_model_inference as model_inference
 
 from pyvacy import optim, analysis
 from pyvacy.optim.dp_optimizer import DPAdam, DPSGD
 import pyvacy.analysis.moments_accountant as moments_accountant
 
-from nn.transformers.mixed_embedding_transformer import Transformer
+from nn.seq2seq_ae import Seq2seq_Autoencoder
 from nn.generator import MLP_Generator
 from nn.discriminator import MLP_Discriminator, CNN_Discriminator
 
 
-def train_model(args, datasets, prob_mask, **kwargs):
+def train_model(args, datasets, prob_mask):
     if not args.test:
-        # model define
         if args.load_model:
             model_path = os.path.join(args.model_path, args.pretrained_model_filename)
-            models = load_model(model_path)
-            Trans = models["Trans"]
+            models = load_dgat(model_path)
+            AE = models["AE"]
             Dx = models["Dx"]
             G = models["G"]
             Dz = models["Dz"]
             
         else:
-
-            Trans = Transformer(
-                num_encoder_layers=args.num_encoder_layers, #6 #1
-                num_decoder_layers=args.num_decoder_layers, #6 #1
+            # model define
+            AE = Seq2seq_Autoencoder(
                 max_length=args.max_length,
-                dim_feature=args.feature_size,
-                dim_model=args.latent_size, #512 #128
-                dim_time=int((kwargs["time_shift"]+kwargs["time_scale"])*1.5), # 
-                num_heads=args.num_heads, #6 #3
-                dim_feedforward=args.hidden_size, #2048 #128
+                rnn_type=args.rnn_type,
+                feature_size=args.feature_size,
+                hidden_size=args.hidden_size,
+                latent_size=args.latent_size,
                 encoder_dropout=args.encoder_dropout,
                 decoder_dropout=args.decoder_dropout,
+                num_layers=args.num_layers,
+                bidirectional=args.bidirectional,
                 use_prob_mask=args.use_prob_mask
                 )
 
@@ -59,32 +57,32 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 archs=args.gmlp_archs
                 )
 
-            Dz = CNN_Discriminator(
-                feature_size=args.latent_size*2,
-                feature_dropout=args.feature_dropout,
-                filter_size=args.filter_size,
-                window_sizes=args.window_sizes,
+            Dz = MLP_Discriminator(
+                input_size=args.latent_size*2,
+                output_size=1,
+                archs=args.dmlp_archs,
                 use_spectral_norm = args.use_spectral_norm
-                )
-            
+                ) 
 
         if torch.cuda.is_available():
-            Trans = Trans.cuda()
+            AE = AE.cuda()
             Dx = Dx.cuda()
             G = G.cuda()
             Dz = Dz.cuda()
         
+        
 
-        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.enc_learning_rate)
-        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.dec_learning_rate)
+        opt_enc = torch.optim.Adam(AE.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(AE.decoder.parameters(), lr=args.dec_learning_rate)
         opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.dx_learning_rate)
         opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.dz_learning_rate)
         opt_gen = torch.optim.Adam(G.parameters(), lr=args.g_learning_rate)
         #
-        if args.dp_sgd == True: # opt_dix and opt_diz access origin data too?
-            opt_dec = DPSGD(params=Trans.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+        if args.dp_sgd == True: # ??? why dec, gen?
+            
+            opt_dec = DPSGD(params=AE.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
-            opt_gen = DPSGD(params=G.parameters(), lr=args.g_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size, 
+            opt_gen = DPSGD(params=G.parameters(), lr=args.g_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
 
@@ -97,16 +95,13 @@ def train_model(args, datasets, prob_mask, **kwargs):
         lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.dz_lr_decay_rate)
         lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.g_lr_decay_rate)
 
-        
         tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
-
         models = {
-                "Trans": Trans,
-                "Dx": Dx,
-                "G": G,
-                "Dz": Dz
-            } 
-        
+            "AE": AE,
+            "Dx": Dx,
+            "G": G,
+            "Dz": Dz
+        }
         opts = {
             "enc": opt_enc,
             "dec": opt_dec,
@@ -136,7 +131,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file, **kwargs)
+            _, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -149,7 +144,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file, **kwargs)
+                valid_loss, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -157,12 +152,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                     path = "{}/model_vloss_{}".format(args.model_path, valid_loss)
                     min_valid_path = path
 
-                    models = {
-                        "Trans": Trans,
-                        "Dx": Dx,
-                        "G": G,
-                        "Dz": Dz
-                    }
                     save_model(models, path)
 
             
@@ -173,15 +162,14 @@ def train_model(args, datasets, prob_mask, **kwargs):
         model_path = os.path.join(args.model_path, args.test_model_filename)
     
     models = load_model(model_path)
-    Trans = models["Trans"]
+    AE = models["AE"]
     G = models["G"]
-    Trans.eval()
+    AE.eval()
     G.eval()
     gen_zs, gen_xs, gen_ms = [], [], []
     for i in range(args.gendata_size//args.batch_size):
-        zgen = G(batch_size=args.batch_size*args.max_length)
-        zgen = torch.reshape(zgen, (args.batch_size, args.max_length, -1))
-        Pgen, Mgen = model_inference(args, Trans.decoder, zgen, prob_mask, **kwargs)
+        zgen = G(batch_size=args.batch_size)
+        Pgen, Mgen = model_inference(args, AE.decoder, zgen, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -200,25 +188,25 @@ def train_model(args, datasets, prob_mask, **kwargs):
 
 
 def save_model(models, path):
-    Trans = models["Trans"]
+    AE = models["AE"]
     Dx = models["Dx"]
     G = models["G"]
     Dz = models["Dz"]
 
-    torch.save(Trans, "{}_Trans".format(path))
+    torch.save(AE, "{}_AE".format(path))
     torch.save(Dx, "{}_Dx".format(path))
     torch.save(G, "{}_G".format(path))
     torch.save(Dz, "{}_Dz".format(path))
 
 
 def load_model(path):
-    Trans = torch.load("{}_Trans".format(path))
+    AE = torch.load("{}_AE".format(path))
     Dx = torch.load("{}_Dx".format(path))
     G = torch.load("{}_G".format(path))
     Dz = torch.load("{}_Dz".format(path))
 
     models = {
-        "Trans": Trans,
+        "AE": AE,
         "Dx": Dx,
         "G": G,
         "Dz": Dz
@@ -226,8 +214,8 @@ def load_model(path):
     return models
 
 
-def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file, **kwargs):
-    Trans = models["Trans"]
+def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file):
+    AE = models["AE"]
     Dx = models["Dx"]
     G = models["G"]
     Dz = models["Dz"]
@@ -252,16 +240,16 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
     n_data = 0
 
     if split == 'train':
-        Trans.encoder_dropout=args.encoder_dropout
-        Trans.decoder_dropout=args.decoder_dropout
-        Trans.train()
+        AE.encoder_dropout=args.encoder_dropout
+        AE.decoder_dropout=args.decoder_dropout
+        AE.train()
         Dx.train()
         G.train()
         Dz.train()
     else:
-        Trans.encoder_dropout=0.0
-        Trans.decoder_dropout=0.0
-        Trans.eval()
+        AE.encoder_dropout=0.0
+        AE.decoder_dropout=0.0
+        AE.eval()
         Dx.eval()
         G.eval()
         Dz.eval()
@@ -280,62 +268,42 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             one = one.cuda()
             mone = mone.cuda()
         
+        src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
+        src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
         #import pdb; pdb.set_trace()
         # Step 0: Evaluate current loss
-        
-        #print("max src_time", torch.amax(batch['src_time'], [0,1]), " -- min src_time", torch.amin(batch['src_time'], [0,1]))
-        #print("max tgt_time", torch.amax(batch['tgt_time'], [0,1]), " -- min tgt_time", torch.amin(batch['tgt_time'], [0,1]))
-        src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
-        src_time = batch['src_time']; tgt_time = batch['tgt_time']
-        gender = batch['gender']
-        race = batch['race']
-        src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
-        src_ava = batch['src_ava']; tgt_ava = batch['tgt_ava']
-
-        if args.no_mask: # z, Pinput, Poutput, Toutput, Moutput
-            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
-                                                None, None, src_ava, tgt_ava)
+        if args.no_mask:
+            z, Pinput, Poutput, Moutput = AE(src_tempo, tgt_tempo, None, None)
             # loss
-            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
-                                                src_mask, tgt_mask, src_ava, tgt_ava)
+            z, Pinput, Poutput, Moutput = AE(src_tempo, tgt_tempo, src_mask, tgt_mask)
             output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
             # loss
-            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            z, Pinput, Poutput, _, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
-                                                src_mask, tgt_mask, src_ava, tgt_ava)
+            z, Pinput, Poutput, Moutput = AE(src_tempo, tgt_tempo, src_mask, tgt_mask)
             # loss
-            recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
-            mask_loss = args.beta_mask * Trans.compute_mask_loss(Moutput, tgt_mask)
+            recon_loss = args.beta_recon * AE.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
+            mask_loss = args.beta_mask * AE.compute_mask_loss(Moutput, tgt_mask)
 
-        zgen = G(batch_size=z.size(0)*args.max_length)
-        zgen = torch.reshape(zgen, (z.size(0), args.max_length, -1))
+
+        zgen = G(batch_size=z.size(0))
         # make up start feature
-        start_feature, start_time, start_mask = sample_start_feature_time_mask(z.size(0))
-        kwargs["start_time"] = start_time
-        sampled_gender, sampled_race = sample_gender_race(z.size(0))
-        kwargs["gender"] = sampled_gender
-        kwargs["race"] = sampled_race
-        if args.no_mask: # Pgen, Tgen, Mgen
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
+        start_feature, start_mask = sample_start_feature_mask(z.size(0))
+        if args.no_mask:
+            Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen)
         elif args.use_prob_mask:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen, **kwargs)
+            Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen)
         else:
-            Pgen, _, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen, **kwargs)
+            Pgen, Mgen = AE.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen)
 
-        #import pdb; pdb.set_trace()
         Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
-        # reshape z, zgen
-        #z = torch.reshape(z, (-1, z.size(-1)))
-        #zgen = torch.reshape(zgen, (-1, zgen.size(-1)))
         Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
 
         xCritic_loss = - Dinput + 0.5 * (Doutput + Dgen)
         zCritic_loss = - Dreal + Dfake
-            
-
+        
         if split == 'train':
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
@@ -374,7 +342,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             recon_loss.backward(retain_graph=True)
             if not args.no_mask and not args.use_prob_mask:
                 mask_loss.backward(retain_graph=True)
-            
             opt_dec.step()
             opt_enc.step()
 
@@ -433,4 +400,11 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         lr_diz.step()
         lr_gen.step()
     
-    return recon_total_loss/iteration
+    models = {
+        "AE": AE,
+        "Dx": Dx,
+        "G": G,
+        "Dz": Dz
+    }
+
+    return recon_total_loss/iteration, models

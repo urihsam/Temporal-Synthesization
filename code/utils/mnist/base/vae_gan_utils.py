@@ -7,7 +7,7 @@ import numpy as np
 from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
-from utils.train_utils import to_var, sample_start_feature_mask, sample_mask_from_prob, model_inference
+from utils.train_utils import to_var, mnist_model_inference as model_inference
 
 from pyvacy import optim, analysis
 from pyvacy.optim.dp_optimizer import DPAdam, DPSGD
@@ -103,7 +103,7 @@ def train_model(args, datasets, prob_mask):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
+            _, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -116,7 +116,7 @@ def train_model(args, datasets, prob_mask):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
+                valid_loss, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -124,10 +124,6 @@ def train_model(args, datasets, prob_mask):
                     path = "{}/model_vloss_{}".format(args.model_path, valid_loss)
                     min_valid_path = path
 
-                    models = {
-                        "AE": AE,
-                        "Dx": Dx
-                    }
                     save_model(models, path)
 
             
@@ -338,4 +334,9 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         lr_dec.step()
         lr_dix.step()
     
-    return recon_total_loss/iteration
+    models = {
+        "AE": AE,
+        "Dx": Dx
+    }
+
+    return recon_total_loss/iteration, models

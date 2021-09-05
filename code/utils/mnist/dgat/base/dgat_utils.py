@@ -7,18 +7,18 @@ import numpy as np
 from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
-from utils.train_utils import to_var,sample_gender_race, sample_start_feature_time_mask, sample_mask_from_prob, model_inference
+from utils.train_utils import to_var, mnist_model_inference as model_inference
 
 from pyvacy import optim, analysis
 from pyvacy.optim.dp_optimizer import DPAdam, DPSGD
 import pyvacy.analysis.moments_accountant as moments_accountant
 
-from nn.transformers.mixed_embedding_transformer import Transformer
+from nn.transformers.naive_transformer import Transformer
 from nn.generator import MLP_Generator
-from nn.discriminator import MLP_Discriminator, CNN_Discriminator, CNN_Auxiliary_Discriminator
+from nn.discriminator import MLP_Discriminator, CNN_Discriminator
 
 
-def train_model(args, datasets, prob_mask, **kwargs):
+def train_model(args, datasets, prob_mask):
     if not args.test:
         # model define
         if args.load_model:
@@ -37,7 +37,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 max_length=args.max_length,
                 dim_feature=args.feature_size,
                 dim_model=args.latent_size, #512 #128
-                dim_time=int((kwargs["time_shift"]+kwargs["time_scale"])*1.5), # 
                 num_heads=args.num_heads, #6 #3
                 dim_feedforward=args.hidden_size, #2048 #128
                 encoder_dropout=args.encoder_dropout,
@@ -45,7 +44,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 use_prob_mask=args.use_prob_mask
                 )
 
-            Dx = CNN_Auxiliary_Discriminator(
+            Dx = CNN_Discriminator(
                 feature_size=args.feature_size,
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
@@ -75,27 +74,27 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Dz = Dz.cuda()
         
 
-        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.learning_rate)
-        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.learning_rate)
-        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.learning_rate)
-        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.learning_rate)
-        opt_gen = torch.optim.Adam(G.parameters(), lr=args.learning_rate)
+        opt_enc = torch.optim.Adam(Trans.encoder.parameters(), lr=args.enc_learning_rate)
+        opt_dec = torch.optim.Adam(Trans.decoder.parameters(), lr=args.dec_learning_rate)
+        opt_dix = torch.optim.Adam(Dx.parameters(), lr=args.dx_learning_rate)
+        opt_diz = torch.optim.Adam(Dz.parameters(), lr=args.dz_learning_rate)
+        opt_gen = torch.optim.Adam(G.parameters(), lr=args.g_learning_rate)
         #
         if args.dp_sgd == True: # opt_dix and opt_diz access origin data too?
-            opt_dec = DPSGD(params=Trans.decoder.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
+            opt_dec = DPSGD(params=Trans.decoder.parameters(), lr=args.dec_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size,
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
-            opt_gen = DPSGD(params=G.parameters(), lr=args.learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size, 
+            opt_gen = DPSGD(params=G.parameters(), lr=args.g_learning_rate, minibatch_size=args.batch_size, microbatch_size=args.batch_size, 
                                         l2_norm_clip=args.l2_norm_clip, noise_multiplier=args.noise_multiplier)
             epsilon = moments_accountant.epsilon(len(datasets['train'].data), args.batch_size, args.noise_multiplier, args.epochs, args.delta)
 
             print('Training procedure satisfies (%f, %f)-DP' % (epsilon, args.delta)) # ?? question, why 2 epsilon?
 
 
-        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.lr_decay_rate)
-        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.lr_decay_rate)
-        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.lr_decay_rate)
-        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.lr_decay_rate)
-        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.lr_decay_rate)
+        lr_enc = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_enc, gamma=args.enc_lr_decay_rate)
+        lr_dec = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dec, gamma=args.dec_lr_decay_rate)
+        lr_dix = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_dix, gamma=args.dx_lr_decay_rate)
+        lr_diz = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_diz, gamma=args.dz_lr_decay_rate)
+        lr_gen = torch.optim.lr_scheduler.ExponentialLR(optimizer=opt_gen, gamma=args.g_lr_decay_rate)
 
         
         tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
@@ -136,7 +135,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
             )
         
             log_file = os.path.join(args.result_path, args.train_log)
-            model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file, **kwargs)
+            _, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "train", log_file)
         
             if epoch % args.valid_eval_freq == 0:
                 data_loader = DataLoader(
@@ -149,7 +148,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
             
                 print("Validation:")
                 log_file = os.path.join(args.result_path, args.valid_log)
-                valid_loss = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file, **kwargs)
+                valid_loss, models = model_evaluation(args, models, opts, lrs, data_loader, prob_mask, "valid", log_file)
                 print("****************************************************")
                 print()
                 if valid_loss < min_valid_loss:
@@ -157,12 +156,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
                     path = "{}/model_vloss_{}".format(args.model_path, valid_loss)
                     min_valid_path = path
 
-                    models = {
-                        "Trans": Trans,
-                        "Dx": Dx,
-                        "G": G,
-                        "Dz": Dz
-                    }
                     save_model(models, path)
 
             
@@ -181,7 +174,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
     for i in range(args.gendata_size//args.batch_size):
         zgen = G(batch_size=args.batch_size*args.max_length)
         zgen = torch.reshape(zgen, (args.batch_size, args.max_length, -1))
-        Pgen, Mgen = model_inference(args, Trans.decoder, zgen, prob_mask, **kwargs)
+        Pgen, Mgen = model_inference(args, Trans.decoder, zgen, prob_mask)
         
         gen_zs.append(zgen)
         gen_xs.append(Pgen)
@@ -226,7 +219,7 @@ def load_model(path):
     return models
 
 
-def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file, **kwargs):
+def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log_file):
     Trans = models["Trans"]
     Dx = models["Dx"]
     G = models["G"]
@@ -248,7 +241,6 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
     # init
     recon_total_loss, mask_total_loss = 0.0, 0.0
     xCritic_total_loss, zCritic_total_loss = 0.0, 0.0
-    gender_total_loss, race_total_loss = 0.0, 0.0
     
     n_data = 0
 
@@ -281,60 +273,39 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             one = one.cuda()
             mone = mone.cuda()
         
-        #import pdb; pdb.set_trace()
-        # Step 0: Evaluate current loss
-        
-        #print("max src_time", torch.amax(batch['src_time'], [0,1]), " -- min src_time", torch.amin(batch['src_time'], [0,1]))
-        #print("max tgt_time", torch.amax(batch['tgt_time'], [0,1]), " -- min tgt_time", torch.amin(batch['tgt_time'], [0,1]))
         src_tempo = batch['src_tempo']; tgt_tempo = batch['tgt_tempo']
         src_time = batch['src_time']; tgt_time = batch['tgt_time']
-        gender = batch['gender']
-        race = batch['race']
         src_mask = batch['src_mask']; tgt_mask = batch['tgt_mask']
-        src_ava = batch['src_ava']; tgt_ava = batch['tgt_ava']
-
+        #import pdb; pdb.set_trace()
+        # Step 0: Evaluate current loss
         if args.no_mask:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race, 
-                                                None, None, src_ava, tgt_ava)
+            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, None, None)
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
         elif args.use_prob_mask:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
-                                                src_mask, tgt_mask, src_ava, tgt_ava)
+            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_mask, tgt_mask)
             output_mask = sample_mask_from_prob(prob_mask, tgt_mask.shape[0], tgt_mask.shape[1])
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, output_mask, tgt_mask)
         else:
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_time, tgt_time, gender, race,
-                                                src_mask, tgt_mask, src_ava, tgt_ava)
+            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, src_mask, tgt_mask)
             # loss
             recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, Moutput, tgt_mask)
             mask_loss = args.beta_mask * Trans.compute_mask_loss(Moutput, tgt_mask)
-
+            
         zgen = G(batch_size=z.size(0)*args.max_length)
         zgen = torch.reshape(zgen, (z.size(0), args.max_length, -1))
         # make up start feature
-        start_feature, start_time, start_mask = sample_start_feature_time_mask(z.size(0))
-        kwargs["start_time"] = start_time
-        sampled_gender, sampled_race = sample_gender_race(z.size(0))
-        kwargs["gender"] = sampled_gender
-        kwargs["race"] = sampled_race
+        start_feature, start_mask = sample_start_feature_mask(z.size(0))
         if args.no_mask:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, z=zgen, **kwargs)
+            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen)
         elif args.use_prob_mask:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, z=zgen, **kwargs)
+            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, prob_mask=prob_mask, memory=zgen)
         else:
-            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, z=zgen, **kwargs)
+            Pgen, Mgen = Trans.decoder.inference(start_feature=start_feature, start_mask=start_mask, memory=zgen)
 
         #import pdb; pdb.set_trace()
-        Dinput, gender_in, race_in = Dx(Pinput)
-        Doutput, gender_out, race_out = Dx(Poutput, Moutput)
-        Dgen, gender_gen, race_gen = Dx(Pgen, Mgen)
-        #
-        Dinput = Dinput.mean()
-        Doutput = Doutput.mean()
-        Dgen = Dgen.mean()
-
+        Dinput, Doutput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
         # reshape z, zgen
         #z = torch.reshape(z, (-1, z.size(-1)))
         #zgen = torch.reshape(zgen, (-1, zgen.size(-1)))
@@ -343,48 +314,22 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         xCritic_loss = - Dinput + 0.5 * (Doutput + Dgen)
         zCritic_loss = - Dreal + Dfake
             
-        #
-        gender_label = torch.nn.functional.one_hot(gender.squeeze(dim=1).cuda().long(), 2)
-        gender_loss = Dx.cal_xentropy_loss(gender_in, gender_label) + Dx.cal_xentropy_loss(gender_out, gender_label) + Dx.cal_xentropy_loss(gender_gen, gender_label)
-        gender_loss *= args.beta_gender
 
-        race_label = torch.nn.functional.one_hot(race.squeeze(dim=1).cuda().long(), 3)
-        race_loss = Dx.cal_xentropy_loss(race_in, race_label) + Dx.cal_xentropy_loss(race_out, race_label) + Dx.cal_xentropy_loss(race_gen, race_label)
-        race_loss *= args.beta_race
         if split == 'train':
             if iteration % args.critic_freq_base < args.critic_freq_hit:
                 # Step 1: Update the Critic_x
-
-                # Auxiliary loss: gender
                 opt_dix.zero_grad()
-                Dx.cal_xentropy_loss(gender_in, gender_label).backward(retain_graph=True)
-                Dx.cal_xentropy_loss(gender_out, gender_label).backward(retain_graph=True)
-                Dx.cal_xentropy_loss(gender_gen, gender_label).backward(retain_graph=True)
-                #
-                Dx.cal_xentropy_loss(race_in, race_label).backward(retain_graph=True)
-                Dx.cal_xentropy_loss(race_out, race_label).backward(retain_graph=True)
-                Dx.cal_xentropy_loss(race_gen, race_label).backward(retain_graph=True)
-                opt_dix.step()
-
-                
-                opt_dix.zero_grad()
-                Dinput, _, _ = Dx(Pinput)
-                Doutput, _, _ = Dx(Poutput, Moutput)
-                Dinput = Dinput.mean()
-                Doutput = Doutput.mean()
+                Dinput, Doutput = Dx(tgt_tempo, tgt_mask).mean(), Dx(Poutput, Moutput).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Doutput.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Poutput.size(1), :], Poutput, Moutput).backward(retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput, tgt_mask, Moutput).backward(retain_graph=True)
                 opt_dix.step()
 
                 opt_dix.zero_grad()
-                Dinput, _, _ = Dx(Pinput)
-                Dgen, _, _ = Dx(Pgen, Mgen)
-                Dinput = Dinput.mean()
-                Dgen = Dgen.mean()
+                Dinput, Dgen = Dx(tgt_tempo, tgt_mask).mean(), Dx(Pgen, Mgen).mean()
                 Dinput.backward(mone, retain_graph=True)
                 Dgen.backward(one, retain_graph=True)
-                Dx.cal_gradient_penalty(Pinput[:, :Pgen.size(1), :], Pgen, Mgen).backward(retain_graph=True)
+                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen, tgt_mask, Mgen).backward(retain_graph=True)
                 opt_dix.step()
                     
                 # Step 2: Update the Critic_z
@@ -397,10 +342,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
 
             # Step 3, 4: Update the Decoder and the Encoder
             opt_dec.zero_grad()
-            Doutput, _, _ = Dx(Poutput, Moutput)
-            Dgen, _, _ =  Dx(Pgen, Mgen)
-            Doutput = Doutput.mean()
-            Dgen = Dgen.mean()
+            Doutput, Dgen = Dx(Poutput, Moutput).mean(), Dx(Pgen, Mgen).mean()
             Doutput.backward(mone, retain_graph=True)
             Dgen.backward(mone, retain_graph=True)
             
@@ -431,48 +373,36 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             mask_loss = 0.0
         xCritic_total_loss += xCritic_loss.data
         zCritic_total_loss += zCritic_loss.data
-        gender_total_loss += gender_loss.data
-        race_total_loss += race_loss.data
 
         if split == 'train' and iteration % args.train_eval_freq == 0:
             # print the losses for each epoch
             print("Learning rate:\t%2.8f"%(lr_gen.get_last_lr()[0]))
             print("Batch loss:")
-            print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f"%(
-                    split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, gender_loss/batch_size, race_loss/batch_size))
-            print("Accumulated loss:")
-            print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f"%(
-                    split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, gender_total_loss/n_data, race_total_loss/n_data))
+            print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
             print()
             with open(log_file, "a+") as file:
                 file.write("Learning rate:\t%2.8f\n"%(lr_gen.get_last_lr()[0]))
                 file.write("Batch loss:\n")
-                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f\n"%(
-                    split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, gender_loss/batch_size, race_loss/batch_size))
-                file.write("Accumulated loss:\n")
-                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f\n"%(
-                    split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, gender_total_loss/n_data, race_total_loss/n_data))
+                file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\n"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
                 file.write("===================================================\n")
     #
     # print the losses for each epoch
     if split == 'train':
         print("Learning rate:\t%2.8f"%(lr_gen.get_last_lr()[0]))
     print("Batch loss:")
-    print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f"%(
-            split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, gender_loss/batch_size, race_loss/batch_size))
-    print("Accumulated loss:")
-    print("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f"%(
-            split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, gender_total_loss/n_data, race_total_loss/n_data))
+    print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
+    if split != "train":
+        print("Accumulated loss:")
+        print("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f"%(split.upper(), recon_total_loss/iteration, mask_total_loss/iteration, xCritic_total_loss/iteration, zCritic_total_loss/iteration))
     print()
     with open(log_file, "a+") as file:
         if split == 'train':
             file.write("Learning rate:\t%2.8f\n"%(lr_gen.get_last_lr()[0]))
         file.write("Batch loss:\n")
-        file.write("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f\n"%(
-            split.upper(), recon_loss/batch_size, mask_loss/batch_size, xCritic_loss/batch_size, zCritic_loss/batch_size, gender_loss/batch_size, race_loss/batch_size))
-        file.write("Accumulated loss:\n")
-        file.write("%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\tgender_loss\t%9.4f\trace_loss\t%9.4f\n"%(
-            split.upper(), recon_total_loss/n_data, mask_total_loss/n_data, xCritic_total_loss/n_data, zCritic_total_loss/n_data, gender_total_loss/n_data, race_total_loss/n_data))
+        file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\n"%(split.upper(), recon_loss, mask_loss, xCritic_loss, zCritic_loss))
+        if split != "train":
+            file.write("Accumulated loss:\n")
+            file.write("\t\t%s\trecon_loss\t%9.4f\tmask_loss\t%9.4f\txCritic_loss\t%9.4f\tzCritic_loss\t%9.4f\n"%(split.upper(), recon_total_loss/iteration, mask_total_loss/iteration, xCritic_total_loss/iteration, zCritic_total_loss/iteration))
         file.write("===================================================\n")
     
     if split == 'train':
@@ -482,4 +412,11 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         lr_diz.step()
         lr_gen.step()
     
-    return recon_total_loss/n_data
+    models = {
+        "Trans": Trans,
+        "Dx": Dx,
+        "G": G,
+        "Dz": Dz
+    }
+
+    return recon_total_loss/iteration, models

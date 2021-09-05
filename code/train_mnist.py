@@ -9,21 +9,18 @@ from multiprocessing import cpu_count
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 
-from datasets.ehr import EHR
+from datasets.mnist import MNIST
 #
-from utils.ehr.base.aae_utils import train_model as train_aae
-from utils.ehr.base.daae_utils import train_model as train_daae
-from utils.ehr.base.gan_utils import train_model as train_gan
-from utils.ehr.base.vae_gan_utils import train_model as train_vae_gan
-from utils.ehr.base.vae_utils import train_model as train_vae
-from utils.ehr.base.vae_utils import train_seq2seq_model as train_seq2seq_vae
+from utils.mnist.base.aae_utils import train_model as train_aae
+from utils.mnist.base.daae_utils import train_model as train_daae
+from utils.mnist.base.gan_utils import train_model as train_gan
+from utils.mnist.base.vae_gan_utils import train_model as train_vae_gan
+from utils.mnist.base.vae_utils import train_model as train_vae
+from utils.mnist.base.vae_utils import train_seq2seq_model as train_seq2seq_vae
 #
-from utils.ehr.dgat.base.dgat_utils import train_model as train_dgat
-from utils.ehr.dgat.base.dgatt_utils import train_model as train_dgatt
-from utils.ehr.dgat.dgamt_utils import train_model as train_dgamt
-from utils.ehr.dgat.edgamt_utils import train_model as train_edgamt
+from utils.mnist.dgat.base.dgat_utils import train_model as train_dgat
 
-from utils.ehr.igat.igamt_utils import train_model as train_igamt
+from utils.mnist.igat.igamt_utils import train_model as train_igamt
 
 
 
@@ -38,25 +35,8 @@ def main(args):
     torch.cuda.set_device(args.gpu_devidx) 
     splits = ["train", "valid", "test"]
 
-    datasets = OrderedDict()
-    for split in splits:
-        datasets[split] = EHR(
-            data_dir=args.data_dir,
-            split=split,
-            max_length=args.max_length
-        )
-    
-    if args.use_prob_mask:
-        prob_mask = np.load(os.path.join(args.data_dir, args.prob_mask_filename))
-    else:
-        prob_mask = None
-
-    infer_file_path = os.path.join(args.data_dir, args.struct_info_file)
-    infer_info = np.load(infer_file_path, allow_pickle=True).item()
-    max_year = infer_info["max"]["start_age_year"][0, 1]
-    min_year = infer_info["min"]["start_age_year"][0, 1]
-    time_shift = min_year
-    time_scale = max_year - min_year
+    datasets =  MNIST(args.data_dir, slice_w=args.slice_w, slice_h=args.slice_h)
+    prob_mask = None
 
     if args.model_type == "daae":
         """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
@@ -88,36 +68,15 @@ def main(args):
         """
         train_dgat(args, datasets, prob_mask)
 
-    elif args.model_type == "dgatt": # dual generative adversarial time-embedding transformer
-        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
-        """
-        train_dgatt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
-
-
-    elif args.model_type == "dgamt": # dual generative adversarial time-embedding transformer
-        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
-        """
-        train_dgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
-
-
-    elif args.model_type == "edgamt": # extra dual generative adversarial time-embedding transformer
-        """ There are two GANs in daae, one is for output data x, another one is for hidden state z.
-        The discriminator for output data uses auxiliary classification with race and gender
-        an extra discriminator is added for masks
-        """
-        train_edgamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
-
-
     elif args.model_type == "igamt": # triplet generative adversarial time-embedding transforls
         """ There are two GANs in daae, one is for output data x, one is for hidden state z and the other one if for imitation of x
         """
-        train_igamt(args, datasets, prob_mask, time_shift=time_shift, time_scale=time_scale)
+        train_igamt(args, datasets, prob_mask)
  
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-
     parser.add_argument('--model_type', type=str, default='daae')
     parser.add_argument('--data_dir', type=str, default='data')
     parser.add_argument('--test', type=bool, default=False)
@@ -132,7 +91,11 @@ if __name__ == '__main__':
     parser.add_argument('--private_model_filename', type=str, default="")
     parser.add_argument('--result_path', type=str, default='results')
     parser.add_argument('--struct_info_file', type=str, default='struct_info.npy')
-    parser.add_argument('--max_length', type=int, default=50)
+    #parser.add_argument('--max_length', type=int, default=50)
+    parser.add_argument('--img_w', type=int, default=28)
+    parser.add_argument('--img_h', type=int, default=28)
+    parser.add_argument('--slice_w', type=int, default=4)
+    parser.add_argument('--slice_h', type=int, default=4)
     parser.add_argument('--train_eval_freq', type=int, default=50)
     parser.add_argument('--valid_eval_freq', type=int, default=1)
     parser.add_argument('--critic_freq_base', type=int, default=5)
