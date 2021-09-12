@@ -1,12 +1,15 @@
 # Customized
 data/*
 **/data_preprocessing/*
+**/data_mnist/*
 **/study/*
 models/*
+models_mnist/*
 **/documents/*
 **/processed_data/*
 **/experiments/*
 **/results/*
+**/results_mnist/*
 **/demo/*
 **/figures/**
 **/graphs/**

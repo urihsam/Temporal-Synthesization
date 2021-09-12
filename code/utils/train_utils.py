@@ -39,7 +39,7 @@ def ehr_model_inference(args, decoder, zgen, prob_mask, **kwargs):
     return Pgen, Mgen
 
 
-def mnist_model_inference(args, decoder, zgen, prob_mask, **kwargs):
+def mnist_model_inference(args, decoder, zgen, batch_size, fea_size, **kwargs):
     # make up start feature
     start_feature = torch.tensor(np.zeros((batch_size, fea_size)))
     Pgen, Mgen = decoder.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
@@ -81,10 +81,16 @@ def sample_start_feature_time_mask_gender_race(batch_size):
     age = torch.tensor(np.random.uniform(size=(batch_size, 1))*0.9, dtype=torch.float)
     year = torch.tensor(np.random.uniform(size=(batch_size, 1))*0.9, dtype=torch.float)
     gender, race = sample_gender_race(batch_size)
-    gender_ = torch.nn.functional.one_hot(gender.squeeze(1).long(), num_classes=2)
-    race_ = torch.nn.functional.one_hot(race.squeeze(1).long(), num_classes=3)
-    start_feature = torch.cat((age, year, age, year, gender_, race_), 1)
-    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1]*9), 0), [batch_size, 1]))
+    gender_shape = (batch_size, 2)
+    race_shape = (batch_size, 3)
+    gender_pos = torch.nn.functional.one_hot(gender.squeeze(1).long(), num_classes=2) * (torch.rand(gender_shape) * 0.4 + 0.6)
+    race_pos = torch.nn.functional.one_hot(race.squeeze(1).long(), num_classes=3) * (torch.rand(race_shape) * 0.4 + 0.6)
+    gender_neg = (1 - gender_pos) * (torch.rand(gender_shape) * 0.4)
+    race_neg = (1 - race_pos) * (torch.rand(race_shape) * 0.4)
+    gender_ = gender_pos + gender_neg
+    race_ = race_pos + race_neg
+    start_feature = torch.cat((age, year, gender_, race_, padding, padding), 1)
+    start_mask = torch.tensor(np.tile(np.expand_dims(np.array([1]*7+[0]*2), 0), [batch_size, 1]))
 
     return start_feature, year, start_mask, gender, race
 

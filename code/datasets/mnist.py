@@ -40,34 +40,62 @@ class MNIST(object):
         self.onehot = onehot
         self.normalize = normalize
         self.biased = biased
-        # load images and labels
-        _file = self.path("train-images-idx3-ubyte.gz")
-        with gfile.Open(_file, 'rb') as f:
-            train_images = self._extract_images(f)
-        _file = self.path("train-labels-idx1-ubyte.gz")
-        with gfile.Open(_file, 'rb') as f:
-            train_labels = self._extract_labels(f, one_hot=onehot)
-        _file = self.path("t10k-images-idx3-ubyte.gz")
-        with gfile.Open(_file, 'rb') as f:
-            self.test_images = self._extract_images(f)
-        _file = self.path("t10k-labels-idx1-ubyte.gz")
-        with gfile.Open(_file, 'rb') as f:
-            self.test_labels = self._extract_labels(f, one_hot=onehot)
+
+        train_path = os.path.join("./", "train")
+        valid_path = os.path.join("./", "valid")
+        test_path = os.path.join("./", "test")
+        if not os.path.exists(train_path) or not os.path.exists(valid_path) or not os.path.exists(test_path):
+            # load images and labels
+            _file = self.path("train-images-idx3-ubyte.gz")
+            with gfile.Open(_file, 'rb') as f:
+                train_images = self._extract_images(f)
+            _file = self.path("train-labels-idx1-ubyte.gz")
+            with gfile.Open(_file, 'rb') as f:
+                train_labels = self._extract_labels(f, one_hot=onehot)
+            _file = self.path("t10k-images-idx3-ubyte.gz")
+            with gfile.Open(_file, 'rb') as f:
+                self.test_images = self._extract_images(f)
+            _file = self.path("t10k-labels-idx1-ubyte.gz")
+            with gfile.Open(_file, 'rb') as f:
+                self.test_labels = self._extract_labels(f, one_hot=onehot)
+            
+            validation_size = int(len(train_images) * (1-split_ratio))
+            train_idx = list(range(len(train_images)))
+            random.shuffle(train_idx)
+            #
+            train_idx = train_idx[:len(train_images)//5]
+            validation_size = validation_size // 5
+            #
+            val_idx = train_idx[:validation_size]
+            tra_idx = train_idx[validation_size:]
+            self.valid_images = train_images[val_idx]
+            self.valid_labels = train_labels[val_idx]
+            self.train_images = train_images[tra_idx]
+            self.train_labels = train_labels[tra_idx]
         
-        validation_size = int(len(train_images) * (1-split_ratio))
-        train_idx = list(range(len(train_images)))
-        random.shuffle(train_idx)
-        #
-        train_idx = train_idx[:len(train_images)//5]
-        validation_size = validation_size // 5
-        #
-        val_idx = train_idx[:validation_size]
-        tra_idx = train_idx[validation_size:]
-        self.valid_images = train_images[val_idx]
-        self.valid_labels = train_labels[val_idx]
-        self.train_images = train_images[tra_idx]
-        self.train_labels = train_labels[tra_idx]
-        
+            #
+            # save
+            if not os.path.exists(train_path): os.mkdir(train_path)
+            np.save(os.path.join(train_path, "images.npy"), self.train_images)
+            np.save(os.path.join(train_path, "labels.npy"), self.train_labels)
+
+            if not os.path.exists(valid_path): os.mkdir(valid_path)
+            np.save(os.path.join(valid_path, "images.npy"), self.valid_images)
+            np.save(os.path.join(valid_path, "labels.npy"), self.valid_labels)
+
+            if not os.path.exists(test_path): os.mkdir(test_path)
+            np.save(os.path.join(test_path, "images.npy"), self.test_images)
+            np.save(os.path.join(test_path, "labels.npy"), self.test_labels)
+        else:
+            self.train_images = np.load(os.path.join(train_path, "images.npy"), allow_pickle=True)
+            self.train_labels = np.load(os.path.join(train_path, "labels.npy"), allow_pickle=True)
+
+            self.valid_images = np.load(os.path.join(valid_path, "images.npy"), allow_pickle=True)
+            self.valid_labels = np.load(os.path.join(valid_path, "labels.npy"), allow_pickle=True)
+
+            self.test_images = np.load(os.path.join(test_path, "images.npy"), allow_pickle=True)
+            self.test_labels = np.load(os.path.join(test_path, "labels.npy"), allow_pickle=True)
+            
         self.shuffle() # shuffle the lists
        
     

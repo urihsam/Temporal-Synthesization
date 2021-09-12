@@ -59,7 +59,7 @@ def train_model(args, datasets, prob_mask):
                 )
 
             Dz = CNN_Discriminator(
-                feature_size=args.latent_size*2,
+                feature_size=args.latent_size,
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
                 window_sizes=args.window_sizes,

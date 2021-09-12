@@ -90,10 +90,16 @@ class EHR(Dataset):
             time = np.floor(ex["time"])#.astype(int) # [time_en]
             # add struc into tempo
             padding = np.array([[0.0]*1])
-            gender_ = np.zeros((1, 2)); gender_[:, gender] = 1
-            race_ = np.zeros((1, 3)); race_[:, race] = 1
-            extra =  np.concatenate([start_age_year, start_age_year, gender_, race_], 1) # [1, 9]
-            extra_mask = np.array([[1]*9])
+            gender_pos = np.zeros((1, 2)); gender_pos[:, gender] = 1
+            race_pos = np.zeros((1, 3)); race_pos[:, race] = 1
+            gender_pos = gender_pos * (np.random.random((1, 2)) * 0.4 + 0.6)
+            race_pos = race_pos * (np.random.random((1, 3)) * 0.4 + 0.6)
+            gender_neg = (1-gender_pos) * (np.random.random((1, 2)) * 0.4)
+            race_neg = (1-race_pos) * (np.random.random((1, 3)) * 0.4)
+            gender_ = gender_pos + gender_neg
+            race_ = race_pos + race_neg
+            extra =  np.concatenate([start_age_year, gender_, race_, padding, padding], 1) # [1, 9]
+            extra_mask = np.array([[1]*7+[0]*2])
             # add extra info at start feature
             tempo = np.concatenate([extra, tempo], 0)
             mask = np.concatenate([extra_mask, mask], 0)

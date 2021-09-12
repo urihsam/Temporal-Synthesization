@@ -57,8 +57,9 @@ def train_model(args, datasets, prob_mask):
                 archs=args.gmlp_archs
                 )
 
+            latent_size = args.latent_size*2 if args.bidirectional else args.latent_size
             Dz = MLP_Discriminator(
-                input_size=args.latent_size*2,
+                input_size=latent_size,
                 output_size=1,
                 archs=args.dmlp_archs,
                 use_spectral_norm = args.use_spectral_norm

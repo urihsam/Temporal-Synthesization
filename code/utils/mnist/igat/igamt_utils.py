@@ -21,6 +21,7 @@ from nn.discriminator import MLP_Discriminator, CNN_Discriminator, CNN_Auxiliary
 lin_params_size =  2
 
 def train_model(args, datasets, prob_mask, **kwargs):
+    max_length = args.img_w//args.slice_w * args.img_h//args.slice_h + 1
     if not args.test:
         # model define
         if args.load_model:
@@ -34,7 +35,6 @@ def train_model(args, datasets, prob_mask, **kwargs):
             Imi = models["Imi"]
             
         else:
-            max_length = args.img_w//args.slice_w * args.img_h//args.slice_h + 1
             Trans = Transformer(
                 num_encoder_layers=args.num_encoder_layers, #6 #1
                 num_decoder_layers=args.num_decoder_layers, #6 #1
@@ -65,7 +65,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
                 )
 
             Dz = CNN_Discriminator(
-                feature_size=args.latent_size*2,
+                feature_size=args.latent_size,#*2,
                 feature_dropout=args.feature_dropout,
                 filter_size=args.filter_size,
                 window_sizes=args.window_sizes,
@@ -205,7 +205,7 @@ def train_model(args, datasets, prob_mask, **kwargs):
     model_generation(args, G, Dec, max_length, prob_mask, prefix=args.model_type+"_pub", **kwargs)
 
 
-def model_generation(args, G_0, G_1, max_len, prob_mask, path=None, prefix=None, **kwargs,):
+def model_generation(args, G_0, G_1, max_len, path=None, prefix=None, **kwargs,):
     if path is None:
         path = args.result_path
     if prefix is None:
@@ -214,21 +214,17 @@ def model_generation(args, G_0, G_1, max_len, prob_mask, path=None, prefix=None,
     for i in range(args.gendata_size//args.batch_size):
         zgen = G_0(batch_size=args.batch_size*max_len)
         zgen = torch.reshape(zgen, (args.batch_size, max_len, -1))
-        Pimi, Mimi = model_inference(args, G_1, zgen, prob_mask, **kwargs)
+        Pimi, Mimi = model_inference(args, G_1, zgen, args.batch_size, args.feature_size, **kwargs)
         
         gen_zs.append(zgen)
         gen_xs.append(Pimi)
-        gen_ms.append(Mimi)
 
     gen_zlist = torch.cat(gen_zs).cpu().detach().numpy()
     gen_xlist = torch.cat(gen_xs).cpu().detach().numpy()
     
     np.save(os.path.join(path, '{}_generated_codes.npy'.format(prefix)), gen_zlist)
     np.save(os.path.join(path, '{}_generated_patients.npy'.format(prefix)), gen_xlist) 
-    
-    if not args.no_mask and not args.use_prob_mask:
-        gen_mlist = torch.cat(gen_ms).cpu().detach().numpy()
-        np.save(os.path.join(path, '{}_generated_masks.npy'.format(prefix)), gen_mlist)
+
 
 
 
@@ -381,87 +377,61 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
         
         
         if split == 'train':
-            if iteration % args.critic_freq_base < args.critic_freq_hit:
-                # Step 1: Update the Critic_x
-                params = list(Dx.parameters())
-                # generated data
-                opt_dx.zero_grad()
-                Dinput = Dx(tgt_tempo)
-                Doutput = Dx(Poutput)
-                Dinput = Dinput.mean()
-                Doutput = Doutput.mean()
-                Dinput.backward(mone, inputs=params, retain_graph=True) # maximize
-                Doutput.backward(one, inputs=params, retain_graph=True) # minimize
-                Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput).backward(inputs=params, retain_graph=True)
-                opt_dx.step()
+            if iteration % args.gen_freq_base < args.gen_freq_hit:
+                if iteration % args.critic_freq_base < args.critic_freq_hit:
+                    # Step 1: Update the Critic_x
+                    params = list(Dx.parameters())
+                    # generated data
+                    opt_dx.zero_grad()
+                    Dinput = Dx(tgt_tempo)
+                    Doutput = Dx(Poutput)
+                    Dinput = Dinput.mean()
+                    Doutput = Doutput.mean()
+                    Dinput.backward(mone, inputs=params, retain_graph=True) # maximize
+                    Doutput.backward(one, inputs=params, retain_graph=True) # minimize
+                    Dx.cal_gradient_penalty(tgt_tempo[:, :Poutput.size(1), :], Poutput).backward(inputs=params, retain_graph=True)
+                    opt_dx.step()
 
-                opt_dx.zero_grad()
-                Dinput = Dx(tgt_tempo)
-                Dgen = Dx(Pgen)
-                Dinput = Dinput.mean()
-                Dgen = Dgen.mean()
-                Dinput.backward(mone, inputs=params, retain_graph=True)
-                Dgen.backward(one, inputs=params, retain_graph=True)
-                Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen).backward(inputs=params, retain_graph=True)
-                opt_dx.step()
-
-                
-                opt_dx.zero_grad()
-                Dinput = Dx(tgt_tempo)
-                Dimi = Dx(Pimi)
-                Dinput = Dinput.mean()
-                Dimi = Dimi.mean()
-                Dinput.backward(mone, inputs=params, retain_graph=True)
-                Dimi.backward(one, inputs=params, retain_graph=True)
-                Dx.cal_gradient_penalty(tgt_tempo[:, :Pimi.size(1), :], Pimi).backward(inputs=params, retain_graph=True)
-                opt_dx.step()
+                    opt_dx.zero_grad()
+                    Dinput = Dx(tgt_tempo)
+                    Dgen = Dx(Pgen)
+                    Dinput = Dinput.mean()
+                    Dgen = Dgen.mean()
+                    Dinput.backward(mone, inputs=params, retain_graph=True)
+                    Dgen.backward(one, inputs=params, retain_graph=True)
+                    Dx.cal_gradient_penalty(tgt_tempo[:, :Pgen.size(1), :], Pgen).backward(inputs=params, retain_graph=True)
+                    opt_dx.step()
 
                     
-                # Step 3: Update the Critic_z
-                params = list(Dz.parameters())
-                opt_dz.zero_grad()
-                Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
-                Dreal.backward(mone, inputs=params, retain_graph=True)
-                Dfake.backward(one, inputs=params, retain_graph=True)
-                Dz.cal_gradient_penalty(z, zgen).backward(inputs=params)
-                opt_dz.step()
-            
-        
+                    opt_dx.zero_grad()
+                    Dinput = Dx(tgt_tempo)
+                    Dimi = Dx(Pimi)
+                    Dinput = Dinput.mean()
+                    Dimi = Dimi.mean()
+                    Dinput.backward(mone, inputs=params, retain_graph=True)
+                    Dimi.backward(one, inputs=params, retain_graph=True)
+                    Dx.cal_gradient_penalty(tgt_tempo[:, :Pimi.size(1), :], Pimi).backward(inputs=params, retain_graph=True)
+                    opt_dx.step()
 
-            # Step 4, 5: Update the Decoder and the Encoder
-            if args.dp_sgd:
-                params = list(Trans.parameters())[:-lin_params_size]
-            else:
-                params = list(Trans.parameters())
-            
-            opt_dec.zero_grad()
-            Doutput = Dx(Poutput)
-            Dgen =  Dx(Pgen)
-            Doutput = Doutput.mean()
-            Dgen = Dgen.mean()
-            Doutput.backward(mone, inputs=params, retain_graph=True)
-            Dgen.backward(mone, inputs=params, retain_graph=True)
-            
-
-            opt_enc.zero_grad()
-
-            Dreal = Dz(z).mean()
-            Dreal.backward(one, inputs=params, retain_graph=True)
-            
-            if args.no_recon == False:
-                recon_loss.backward(inputs=params, retain_graph=True)
-
-            opt_dec.step()
-            opt_enc.step()
-        
-            if args.dp_sgd:
-                #import pdb; pdb.set_trace()
-                params = list(Trans.parameters())[-lin_params_size:]
+                        
+                    # Step 3: Update the Critic_z
+                    params = list(Dz.parameters())
+                    opt_dz.zero_grad()
+                    Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
+                    Dreal.backward(mone, inputs=params, retain_graph=True)
+                    Dfake.backward(one, inputs=params, retain_graph=True)
+                    Dz.cal_gradient_penalty(z, zgen).backward(inputs=params)
+                    opt_dz.step()
                 
-                #z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, None, None)
-                # loss
-                #recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
-                opt_lin.zero_grad()
+            
+
+                # Step 4, 5: Update the Decoder and the Encoder
+                if args.dp_sgd:
+                    params = list(Trans.parameters())[:-lin_params_size]
+                else:
+                    params = list(Trans.parameters())
+                
+                opt_dec.zero_grad()
                 Doutput = Dx(Poutput)
                 Dgen =  Dx(Pgen)
                 Doutput = Doutput.mean()
@@ -469,38 +439,66 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
                 Doutput.backward(mone, inputs=params, retain_graph=True)
                 Dgen.backward(mone, inputs=params, retain_graph=True)
                 
+
+                opt_enc.zero_grad()
+
+                Dreal = Dz(z).mean()
+                Dreal.backward(one, inputs=params, retain_graph=True)
+                
                 if args.no_recon == False:
                     recon_loss.backward(inputs=params, retain_graph=True)
+
+                opt_dec.step()
+                opt_enc.step()
+            
+                if args.dp_sgd:
+                    #import pdb; pdb.set_trace()
+                    params = list(Trans.parameters())[-lin_params_size:]
                     
-                opt_lin.step()
+                    #z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, None, None)
+                    # loss
+                    #recon_loss = args.beta_recon * Trans.compute_recon_loss(Poutput, tgt_tempo, None, None)
+                    opt_lin.zero_grad()
+                    Doutput = Dx(Poutput)
+                    Dgen =  Dx(Pgen)
+                    Doutput = Doutput.mean()
+                    Dgen = Dgen.mean()
+                    Doutput.backward(mone, inputs=params, retain_graph=True)
+                    Dgen.backward(mone, inputs=params, retain_graph=True)
+                    
+                    if args.no_recon == False:
+                        recon_loss.backward(inputs=params, retain_graph=True)
+                        
+                    opt_lin.step()
 
 
-            # step 6: Update Imi
-            opt_imi.zero_grad()
-            #import pdb; pdb.set_trace()
-            params = list(Imi.parameters())[:-lin_params_size]
-            #freeze_params(params)
-            Dimi =  Dx(Pimi)
-            Dimi = Dimi.mean()
-            Dimi.backward(mone, inputs=params, retain_graph=True)
-            
-            opt_imi.zero_grad()
-            # match
-            gen_match_loss.backward(inputs=params, retain_graph=True)
-            
-            #opt_imi.zero_grad()
-            # match
-            input_match_loss.backward(inputs=params, retain_graph=True)
-            
-            Pimi, Mimi = Imi.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
-            z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, None, None)
-            output_match_loss = args.beta_match_i*Imi.compute_recon_loss(Pimi, Poutput, type="mse")
-            #opt_imi.zero_grad()
-            output_match_loss.backward(inputs=params, retain_graph=True)
-            opt_imi.step()   
-            
-            #defreeze_params(params)
-            #
+                # step 6: Update Imi
+                opt_imi.zero_grad()
+                #import pdb; pdb.set_trace()
+                params = list(Imi.parameters())[:-lin_params_size]
+                #freeze_params(params)
+                Dimi =  Dx(Pimi)
+                Dimi = Dimi.mean()
+                Dimi.backward(mone, inputs=params, retain_graph=True)
+                opt_imi.step()
+
+                opt_imi.zero_grad()
+                # match
+                gen_match_loss.backward(inputs=params, retain_graph=True)
+                
+                #opt_imi.zero_grad()
+                # match
+                input_match_loss.backward(inputs=params, retain_graph=True)
+                
+                Pimi, Mimi = Imi.inference(start_feature=start_feature, start_mask=None, memory=zgen, **kwargs)
+                z, Pinput, Poutput, Moutput = Trans(src_tempo, tgt_tempo, None, None)
+                output_match_loss = args.beta_match_o*Imi.compute_recon_loss(Pimi, Poutput, type="mse")
+                #opt_imi.zero_grad()
+                output_match_loss.backward(inputs=params, retain_graph=True)
+                opt_imi.step()
+                
+                #defreeze_params(params)
+                #
 
 
             # Step 6: Update the Generator
@@ -531,7 +529,7 @@ def model_evaluation(args, models, opts, lrs, data_loader, prob_mask, split, log
             Dreal, Dfake = Dz(z).mean(), Dz(zgen).mean()
 
             
-            output_match_loss = args.beta_match_i*Imi.compute_recon_loss(Pimi, Poutput, None, None, type="mse")
+            output_match_loss = args.beta_match_o*Imi.compute_recon_loss(Pimi, Poutput, None, None, type="mse")
             #
             
         #
